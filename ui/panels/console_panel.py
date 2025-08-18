@@ -1,0 +1,1 @@
+# Consola de mensajes/errores

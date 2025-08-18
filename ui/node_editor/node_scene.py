@@ -1,0 +1,1 @@
+# Escena de nodos (QGraphicsScene)

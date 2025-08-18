@@ -1,0 +1,1 @@
+# Sampling de texturas

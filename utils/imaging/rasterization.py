@@ -1,0 +1,1 @@
+# Rasterización de vectores

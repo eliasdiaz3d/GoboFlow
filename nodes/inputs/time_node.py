@@ -1,0 +1,1 @@
+# Nodo de tiempo (para animación)

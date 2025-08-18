@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" 
+     width="400" height="400" 
+     viewBox="-200 -200 400 400"
+     style="background: black;">
+  
+  <!-- Círculo generado por GoboFlow -->
+  <circle cx="0.0" cy="0.0" r="150.0" fill="white" stroke="none"/>
+  
+  <!-- Información del gobo -->
+  <text x="-180" y="180" fill="white" font-family="Arial" font-size="12">
+    GoboFlow v0.1.0 - Radio: 150.0px
+  </text>
+  
+</svg>

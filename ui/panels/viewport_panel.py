@@ -1,0 +1,1 @@
+# Panel de vista previa 2D

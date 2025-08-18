@@ -1,0 +1,1 @@
+# Nodo rectángulo

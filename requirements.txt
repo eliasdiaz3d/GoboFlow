@@ -1,0 +1,23 @@
+# GoboFlow Dependencies
+
+# GUI Framework (optional but recommended)
+PyQt6>=6.4.0
+
+# Core dependencies (these are usually included with Python)
+# pathlib (Python 3.4+)
+# typing (Python 3.5+)
+# abc (built-in)
+# enum (Python 3.4+)
+# math (built-in)
+# uuid (built-in)
+# json (built-in)
+
+# Development dependencies (optional)
+pytest>=7.0.0           # For running tests
+black>=22.0.0           # Code formatting
+flake8>=4.0.0           # Code linting
+
+# Future dependencies (will be added later)
+# numpy>=1.21.0         # For advanced math operations
+# Pillow>=9.0.0         # For image processing
+# svglib>=1.4.0         # For advanced SVG handling

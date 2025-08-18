@@ -1,0 +1,1 @@
+# Remapeo de colores
