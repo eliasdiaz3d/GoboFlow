@@ -1,8 +1,7 @@
-"""
+def _on_node_added(self, node):"""
 Ventana principal de GoboFlow
 Interfaz gráfica principal con editor de nodos y paneles
 """
-
 
 import sys
 from pathlib import Path
@@ -32,6 +31,7 @@ from config import (
 )
 from core.node_system import NodeGraph
 from nodes.primitives.circle_node import CircleNode
+from nodes.primitives.rectangle_node import RectangleNode
 from nodes.base.base_node import NumberParameterNode, ViewerNode
 
 # Importar editor de nodos
@@ -42,8 +42,14 @@ except ImportError:
     NodeEditorWidget = None
     create_node_editor = None
 
-print(f"NODE_EDITOR_AVAILABLE: {NODE_EDITOR_AVAILABLE}")
-print(f"create_node_editor: {create_node_editor}")
+# Importar viewport
+try:
+    from .viewport import ViewportWidget, create_viewport_widget, VIEWPORT_AVAILABLE
+except ImportError:
+    VIEWPORT_AVAILABLE = False
+    ViewportWidget = None
+    create_viewport_widget = None
+
 class GoboFlowMainWindow(QMainWindow):
     """
     Ventana principal de GoboFlow
@@ -62,6 +68,10 @@ class GoboFlowMainWindow(QMainWindow):
         self.current_project_path: Optional[Path] = None
         self.node_graph = NodeGraph()
         self.is_modified = False
+        
+        # Referencias a componentes
+        self.node_editor = None
+        self.viewport_widget = None
         
         # Configuración de Qt
         self.settings = QSettings('GoboFlow', 'GoboFlow')
@@ -82,6 +92,9 @@ class GoboFlowMainWindow(QMainWindow):
         
         # Crear proyecto nuevo por defecto
         self._new_project()
+        
+        # Actualizar viewport inicial después de un breve delay
+        QTimer.singleShot(500, self._update_viewport)
         
         print("🎨 Ventana principal de GoboFlow inicializada")
     
@@ -247,6 +260,16 @@ class GoboFlowMainWindow(QMainWindow):
     
     def _create_viewport(self) -> QWidget:
         """Crea el viewport de preview"""
+        if VIEWPORT_AVAILABLE:
+            # Crear viewport real
+            self.viewport_widget = create_viewport_widget()
+            
+            # Conectar señales
+            if self.viewport_widget:
+                self.viewport_widget.export_requested.connect(self._export_svg)
+                return self.viewport_widget
+        
+        # Fallback placeholder
         viewport = QFrame()
         viewport.setFrameStyle(QFrame.Shape.StyledPanel)
         viewport.setStyleSheet("background: black; border: 1px solid #555;")
@@ -265,6 +288,7 @@ class GoboFlowMainWindow(QMainWindow):
         preview_area.setMinimumHeight(150)
         layout.addWidget(preview_area)
         
+        self.viewport_widget = None
         return viewport
     
     def _create_right_panel(self) -> QWidget:
@@ -357,6 +381,10 @@ class GoboFlowMainWindow(QMainWindow):
         add_circle_action.triggered.connect(self._add_circle_node)
         nodes_menu.addAction(add_circle_action)
         
+        add_rectangle_action = QAction("Añadir &Rectángulo", self)
+        add_rectangle_action.triggered.connect(self._add_rectangle_node)
+        nodes_menu.addAction(add_rectangle_action)
+        
         add_number_action = QAction("Añadir &Número", self)
         add_number_action.triggered.connect(self._add_number_node)
         nodes_menu.addAction(add_number_action)
@@ -394,6 +422,9 @@ class GoboFlowMainWindow(QMainWindow):
         # Botones de nodos
         circle_btn = main_toolbar.addAction("🔵 Círculo")
         circle_btn.triggered.connect(self._add_circle_node)
+        
+        rectangle_btn = main_toolbar.addAction("⬜ Rectángulo")
+        rectangle_btn.triggered.connect(self._add_rectangle_node)
         
         number_btn = main_toolbar.addAction("🔢 Número")
         number_btn.triggered.connect(self._add_number_node)
@@ -566,17 +597,56 @@ class GoboFlowMainWindow(QMainWindow):
             self._save_project()
     
     def _export_svg(self):
-        """Exporta el gobo a SVG"""
+        """Exporta el gobo a SVG usando el viewport"""
+        if not self.viewport_widget:
+            # Fallback al método anterior
+            file_path, _ = QFileDialog.getSaveFileName(
+                self, "Exportar SVG",
+                str(Path.home() / "gobo_export.svg"),
+                "SVG Files (*.svg);;All Files (*.*)"
+            )
+            
+            if file_path:
+                # TODO: Implementar exportación básica
+                self.statusBar().showMessage(f"Exportado: {Path(file_path).name}")
+                print(f"📤 Exportando a: {file_path}")
+            return
+        
+        # Usar viewport para exportación de alta calidad
         file_path, _ = QFileDialog.getSaveFileName(
-            self, "Exportar SVG",
+            self, "Exportar Gobo a SVG",
             str(Path.home() / "gobo_export.svg"),
             "SVG Files (*.svg);;All Files (*.*)"
         )
         
         if file_path:
-            # TODO: Implementar exportación real
-            self.statusBar().showMessage(f"Exportado: {Path(file_path).name}")
-            print(f"📤 Exportando a: {file_path}")
+            try:
+                # Exportar usando el viewport
+                success = self.viewport_widget.export_svg(file_path, (1024, 1024))
+                
+                if success:
+                    self.statusBar().showMessage(f"✅ Exportado exitosamente: {Path(file_path).name}")
+                    print(f"📤 SVG exportado exitosamente: {file_path}")
+                    
+                    # Mostrar mensaje de éxito
+                    QMessageBox.information(
+                        self, "Exportación Exitosa",
+                        f"Gobo exportado exitosamente a:\n{file_path}\n\nResolución: 1024x1024 px"
+                    )
+                else:
+                    self.statusBar().showMessage("❌ Error en la exportación")
+                    QMessageBox.warning(
+                        self, "Error de Exportación",
+                        "No se pudo exportar el gobo.\nVerifica que haya geometrías para exportar."
+                    )
+                    
+            except Exception as e:
+                self.statusBar().showMessage("❌ Error en la exportación")
+                QMessageBox.critical(
+                    self, "Error de Exportación",
+                    f"Error inesperado durante la exportación:\n{e}"
+                )
+                print(f"❌ Error exportando SVG: {e}")
     
     def _add_circle_node(self):
         """Añade un nodo círculo al grafo"""
@@ -610,6 +680,22 @@ class GoboFlowMainWindow(QMainWindow):
         self.statusBar().showMessage("Nodo número añadido")
         print("🔢 Nodo número añadido")
     
+    def _add_rectangle_node(self):
+        """Añade un nodo rectángulo al grafo"""
+        rectangle_node = RectangleNode(f"Rectángulo {len(self.node_graph.nodes) + 1}")
+        
+        # Añadir al modelo
+        self.node_graph.add_node(rectangle_node)
+        
+        # Añadir al editor visual si está disponible
+        if self.node_editor and NODE_EDITOR_AVAILABLE:
+            self.node_editor.add_node(rectangle_node)
+        
+        self.is_modified = True
+        self.graph_updated.emit()
+        self.statusBar().showMessage("Nodo rectángulo añadido")
+        print("⬜ Nodo rectángulo añadido")
+    
     def _add_viewer_node(self):
         """Añade un nodo visor al grafo"""
         viewer_node = ViewerNode(f"Visor {len(self.node_graph.nodes) + 1}")
@@ -636,12 +722,43 @@ class GoboFlowMainWindow(QMainWindow):
                 if hasattr(node, 'compute'):
                     node.compute()
             
+            # Actualizar viewport después de ejecutar
+            self._update_viewport()
+            
             self.statusBar().showMessage("Grafo ejecutado exitosamente")
             print("▶️ Grafo ejecutado exitosamente")
             
         except Exception as e:
             QMessageBox.warning(self, "Error de Ejecución", f"Error ejecutando el grafo:\n{e}")
             print(f"❌ Error ejecutando grafo: {e}")
+    
+    def _update_viewport(self):
+        """Actualiza el viewport con las geometrías actuales"""
+        if not self.viewport_widget:
+            return
+        
+        try:
+            # Recopilar todas las geometrías del grafo
+            geometries = []
+            
+            for node in self.node_graph.nodes.values():
+                # Buscar nodos con output de geometría
+                if hasattr(node, 'output_sockets') and 'geometry' in node.output_sockets:
+                    try:
+                        # Obtener la geometría del nodo
+                        if hasattr(node, 'generate_geometry'):
+                            geometry = node.generate_geometry()
+                            if geometry is not None:
+                                geometries.append(geometry)
+                    except Exception as e:
+                        print(f"Error obteniendo geometría de {node.title}: {e}")
+            
+            # Actualizar viewport
+            self.viewport_widget.update_geometries(geometries)
+            print(f"🎨 Viewport actualizado con {len(geometries)} geometría(s)")
+            
+        except Exception as e:
+            print(f"❌ Error actualizando viewport: {e}")
     
     def _show_about(self):
         """Muestra el diálogo Acerca de"""
@@ -710,6 +827,9 @@ class GoboFlowMainWindow(QMainWindow):
         if node.id not in self.node_graph.nodes:
             self.node_graph.add_node(node)
         self.graph_updated.emit()
+        
+        # Actualizar viewport automáticamente
+        self._update_viewport()
     
     def _on_node_removed(self, node):
         """Se ejecuta cuando se remueve un nodo del editor"""
@@ -717,12 +837,19 @@ class GoboFlowMainWindow(QMainWindow):
         if node.id in self.node_graph.nodes:
             self.node_graph.remove_node(node.id)
         self.graph_updated.emit()
+        
+        # Actualizar viewport automáticamente
+        self._update_viewport()
     
     def _on_connection_created(self, connection):
         """Se ejecuta cuando se crea una conexión en el editor"""
         # Las conexiones ya están sincronizadas en el modelo
         self.is_modified = True
         self.project_changed.emit()
+        
+        # Actualizar viewport automáticamente
+        self._update_viewport()
+        
         print(f"Conexión creada: {connection.output_socket.node.title} -> {connection.input_socket.node.title}")
     
     def closeEvent(self, event):
