@@ -611,6 +611,7 @@ class PropertiesPanel(QWidget):
             error_label = QLabel(f"Error generando propiedades: {e}")
             error_label.setStyleSheet("color: #ff6666; font-size: 11px;")
             self.content_layout.addWidget(error_label)
+            print(f"❌ Error en generate_node_parameters: {e}")
     
     def add_node_info_section(self, node):
         """Añade sección de información del nodo"""
@@ -868,6 +869,9 @@ def create_properties_panel(parent=None) -> PropertiesPanel:
     """Crea un panel de propiedades"""
     if not PYQT_AVAILABLE:
         # Fallback si PyQt6 no está disponible
+        from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel
+        from PyQt6.QtCore import Qt
+        
         fallback = QWidget(parent)
         layout = QVBoxLayout(fallback)
         label = QLabel("Panel de propiedades no disponible\nInstala PyQt6 completamente")

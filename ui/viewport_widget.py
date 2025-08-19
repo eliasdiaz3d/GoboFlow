@@ -1,16 +1,15 @@
 """
-Widget de viewport para vista previa SVG en tiempo real
-Reemplaza el placeholder actual con funcionalidad real
+Widget de viewport para vista previa en tiempo real SIN dependencia SVG
+Usa QPainter para renderizado directo - más rápido y sin dependencias
 """
 
 try:
     from PyQt6.QtWidgets import (
         QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, 
-        QFrame, QSizePolicy, QScrollArea, QSlider, QSpinBox
+        QFrame, QSlider, QScrollArea
     )
-    from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QSize
-    from PyQt6.QtGui import QPainter, QPixmap, QPen, QBrush, QColor, QFont
-    from PyQt6.QtSvgWidgets import QSvgWidget
+    from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QRectF
+    from PyQt6.QtGui import QPainter, QPen, QBrush, QColor, QFont, QPainterPath
     PYQT_AVAILABLE = True
 except ImportError:
     PYQT_AVAILABLE = False
@@ -20,7 +19,7 @@ except ImportError:
 
 class ViewportWidget(QWidget):
     """
-    Widget de viewport con vista previa SVG en tiempo real
+    Widget de viewport con vista previa en tiempo real usando QPainter
     """
     
     # Señales
@@ -30,12 +29,11 @@ class ViewportWidget(QWidget):
         super().__init__(parent)
         
         # Estado del viewport
-        self.current_svg_content = ""
         self.current_geometry = None
         self.viewport_size = (1024, 1024)  # Resolución del gobo
-        self.background_color = "black"
         self.show_grid = False
         self.show_info = True
+        self.zoom_factor = 1.0
         
         # Configurar UI
         self.init_ui()
@@ -45,10 +43,7 @@ class ViewportWidget(QWidget):
         self.update_timer.timeout.connect(self.auto_refresh)
         self.update_timer.start(100)  # Refresh cada 100ms
         
-        # Generar SVG inicial
-        self.generate_default_svg()
-        
-        print("🖼️ Viewport con SVG en tiempo real inicializado")
+        print("🖼️ Viewport (QPainter) en tiempo real inicializado")
     
     def init_ui(self):
         """Inicializa la interfaz del viewport"""
@@ -60,7 +55,7 @@ class ViewportWidget(QWidget):
         header = self.create_header()
         layout.addWidget(header)
         
-        # Área principal con SVG
+        # Área principal con canvas
         main_area = self.create_main_area()
         layout.addWidget(main_area)
         
@@ -87,6 +82,9 @@ class ViewportWidget(QWidget):
             }
             QPushButton:hover {
                 background: #606060;
+            }
+            QPushButton:checked {
+                background: #0078d4;
             }
             QLabel {
                 color: white;
@@ -129,7 +127,7 @@ class ViewportWidget(QWidget):
         return header
     
     def create_main_area(self) -> QWidget:
-        """Crea el área principal con el SVG"""
+        """Crea el área principal con el canvas"""
         # Contenedor con scroll
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
@@ -141,24 +139,16 @@ class ViewportWidget(QWidget):
             }
         """)
         
-        # Widget contenedor para el SVG
+        # Widget contenedor para el canvas
         container = QWidget()
         container.setMinimumSize(600, 600)
         container_layout = QVBoxLayout(container)
         container_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         
-        # Widget SVG
-        self.svg_widget = QSvgWidget()
-        self.svg_widget.setFixedSize(400, 400)  # Tamaño inicial
-        self.svg_widget.setStyleSheet("""
-            QSvgWidget {
-                background: black;
-                border: 2px solid #666;
-                border-radius: 4px;
-            }
-        """)
-        
-        container_layout.addWidget(self.svg_widget)
+        # Canvas widget
+        self.canvas = CanvasWidget()
+        self.canvas.setFixedSize(400, 400)  # Tamaño inicial
+        container_layout.addWidget(self.canvas)
         
         scroll_area.setWidget(container)
         return scroll_area
@@ -176,6 +166,18 @@ class ViewportWidget(QWidget):
                 color: #ccc;
                 font-size: 11px;
                 padding: 2px;
+            }
+            QSlider::groove:horizontal {
+                background: #555;
+                height: 6px;
+                border-radius: 3px;
+            }
+            QSlider::handle:horizontal {
+                background: #0078d4;
+                width: 16px;
+                height: 16px;
+                margin: -5px 0;
+                border-radius: 8px;
             }
         """)
         
@@ -225,177 +227,25 @@ class ViewportWidget(QWidget):
         try:
             self.current_geometry = geometry_data
             
-            if geometry_data is None:
-                self.generate_default_svg()
-                self.geometry_info_label.setText("Geometría: Ninguna")
-                return
+            # Actualizar canvas
+            self.canvas.set_geometry(geometry_data)
+            self.canvas.set_grid(self.show_grid)
+            self.canvas.set_info(self.show_info)
+            self.canvas.set_zoom(self.zoom_factor)
+            self.canvas.update()
             
-            # Generar SVG desde la geometría
-            svg_content = self.generate_svg_from_geometry(geometry_data)
-            
-            if svg_content:
-                self.current_svg_content = svg_content
-                
-                # Cargar en el widget SVG
-                self.svg_widget.load(svg_content.encode('utf-8'))
-                
-                # Actualizar información
+            # Actualizar información
+            if geometry_data:
                 self.update_geometry_info(geometry_data)
                 self.status_label.setText("Estado: Actualizado")
+                print(f"🔄 Viewport actualizado con nueva geometría")
             else:
-                self.generate_default_svg()
+                self.geometry_info_label.setText("Geometría: Ninguna")
+                self.status_label.setText("Estado: Sin geometría")
                 
         except Exception as e:
             print(f"❌ Error actualizando preview: {e}")
             self.status_label.setText(f"Estado: Error - {e}")
-            self.generate_default_svg()
-    
-    def generate_svg_from_geometry(self, geometry_data) -> str:
-        """Genera contenido SVG desde datos de geometría"""
-        try:
-            # Determinar tipo de geometría
-            if hasattr(geometry_data, 'get_svg_path'):
-                # Geometría con método SVG
-                svg_path = geometry_data.get_svg_path()
-                geometry_type = getattr(geometry_data, 'geometry_type', 'unknown')
-                
-                # Información adicional
-                info_text = ""
-                if hasattr(geometry_data, 'radius'):
-                    info_text = f"Radio: {geometry_data.radius:.1f}px"
-                elif hasattr(geometry_data, 'width'):
-                    info_text = f"Tamaño: {geometry_data.width:.1f}×{geometry_data.height:.1f}px"
-                
-            elif isinstance(geometry_data, dict) and 'type' in geometry_data:
-                # Geometría como diccionario
-                if geometry_data['type'] == 'circle':
-                    center = geometry_data.get('center', (512, 512))
-                    radius = geometry_data.get('radius', 100)
-                    svg_path = f'<circle cx="{center[0]}" cy="{center[1]}" r="{radius}" fill="white" opacity="0.8"/>'
-                    info_text = f"Radio: {radius:.1f}px"
-                    geometry_type = "circle"
-                else:
-                    svg_path = '<circle cx="512" cy="512" r="50" fill="white" opacity="0.5"/>'
-                    info_text = "Geometría desconocida"
-                    geometry_type = "unknown"
-            else:
-                # Fallback: círculo simple
-                svg_path = '<circle cx="512" cy="512" r="100" fill="white" opacity="0.8"/>'
-                info_text = "Geometría básica"
-                geometry_type = "basic"
-            
-            # Construir SVG completo
-            svg_content = f'''<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" 
-     width="{self.viewport_size[0]}" height="{self.viewport_size[1]}" 
-     viewBox="0 0 {self.viewport_size[0]} {self.viewport_size[1]}"
-     style="background: {self.background_color};">
-  
-  <!-- Grid de referencia -->
-  {self.generate_grid_svg() if self.show_grid else ""}
-  
-  <!-- Geometría principal -->
-  {svg_path}
-  
-  <!-- Información del gobo -->
-  {self.generate_info_svg(info_text) if self.show_info else ""}
-  
-</svg>'''
-            
-            return svg_content
-            
-        except Exception as e:
-            print(f"❌ Error generando SVG: {e}")
-            return self.get_error_svg(str(e))
-    
-    def generate_grid_svg(self) -> str:
-        """Genera grid de referencia en SVG"""
-        grid_size = 64  # Tamaño de la grilla
-        width, height = self.viewport_size
-        
-        lines = []
-        
-        # Líneas verticales
-        for x in range(0, width + 1, grid_size):
-            opacity = "0.3" if x % (grid_size * 4) == 0 else "0.1"
-            lines.append(f'<line x1="{x}" y1="0" x2="{x}" y2="{height}" stroke="white" stroke-width="1" opacity="{opacity}"/>')
-        
-        # Líneas horizontales
-        for y in range(0, height + 1, grid_size):
-            opacity = "0.3" if y % (grid_size * 4) == 0 else "0.1"
-            lines.append(f'<line x1="0" y1="{y}" x2="{width}" y2="{y}" stroke="white" stroke-width="1" opacity="{opacity}"/>')
-        
-        return "\n  ".join(lines)
-    
-    def generate_info_svg(self, info_text: str) -> str:
-        """Genera información superpuesta en el SVG"""
-        from datetime import datetime
-        
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        
-        return f'''
-  <!-- Información del gobo -->
-  <g opacity="0.8">
-    <rect x="10" y="10" width="300" height="80" fill="black" opacity="0.7" rx="5"/>
-    <text x="20" y="30" fill="white" font-family="Arial" font-size="14" font-weight="bold">
-      GoboFlow v0.1.0
-    </text>
-    <text x="20" y="50" fill="#ccc" font-family="Arial" font-size="12">
-      {info_text}
-    </text>
-    <text x="20" y="70" fill="#aaa" font-family="Arial" font-size="10">
-      Generado: {timestamp}
-    </text>
-  </g>'''
-    
-    def generate_default_svg(self):
-        """Genera SVG por defecto cuando no hay geometría"""
-        svg_content = f'''<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" 
-     width="{self.viewport_size[0]}" height="{self.viewport_size[1]}" 
-     viewBox="0 0 {self.viewport_size[0]} {self.viewport_size[1]}"
-     style="background: {self.background_color};">
-  
-  <!-- Mensaje por defecto -->
-  <g opacity="0.6">
-    <circle cx="512" cy="512" r="200" fill="none" stroke="white" stroke-width="2" stroke-dasharray="10,5"/>
-    <text x="512" y="480" fill="white" font-family="Arial" font-size="24" text-anchor="middle" font-weight="bold">
-      GoboFlow
-    </text>
-    <text x="512" y="510" fill="#ccc" font-family="Arial" font-size="16" text-anchor="middle">
-      Editor de Gobos
-    </text>
-    <text x="512" y="540" fill="#aaa" font-family="Arial" font-size="12" text-anchor="middle">
-      Conecta nodos para generar geometría
-    </text>
-  </g>
-  
-  {self.generate_grid_svg() if self.show_grid else ""}
-  
-</svg>'''
-        
-        self.current_svg_content = svg_content
-        self.svg_widget.load(svg_content.encode('utf-8'))
-    
-    def get_error_svg(self, error_message: str) -> str:
-        """Genera SVG de error"""
-        return f'''<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" 
-     width="{self.viewport_size[0]}" height="{self.viewport_size[1]}" 
-     viewBox="0 0 {self.viewport_size[0]} {self.viewport_size[1]}"
-     style="background: {self.background_color};">
-  
-  <g opacity="0.8">
-    <circle cx="512" cy="512" r="100" fill="none" stroke="red" stroke-width="3"/>
-    <text x="512" y="400" fill="red" font-family="Arial" font-size="20" text-anchor="middle" font-weight="bold">
-      Error
-    </text>
-    <text x="512" y="430" fill="#ff6666" font-family="Arial" font-size="12" text-anchor="middle">
-      {error_message[:50]}
-    </text>
-  </g>
-  
-</svg>'''
     
     def update_geometry_info(self, geometry_data):
         """Actualiza la información de geometría en el footer"""
@@ -423,51 +273,325 @@ class ViewportWidget(QWidget):
     def toggle_grid(self, show: bool):
         """Activa/desactiva la grilla"""
         self.show_grid = show
-        if self.current_geometry:
-            self.update_preview(self.current_geometry)
-        else:
-            self.generate_default_svg()
+        if hasattr(self, 'canvas'):
+            self.canvas.set_grid(show)
+            self.canvas.update()
+        print(f"🔳 Grid {'activado' if show else 'desactivado'}")
     
     def toggle_info(self, show: bool):
         """Activa/desactiva la información"""
         self.show_info = show
-        if self.current_geometry:
-            self.update_preview(self.current_geometry)
-        else:
-            self.generate_default_svg()
+        if hasattr(self, 'canvas'):
+            self.canvas.set_info(show)
+            self.canvas.update()
+        print(f"ℹ️ Info {'activada' if show else 'desactivada'}")
     
     def on_zoom_changed(self, value):
         """Maneja cambios en el zoom"""
         zoom_percent = value
+        self.zoom_factor = value / 100.0
         self.zoom_value_label.setText(f"{zoom_percent}%")
         
-        # Calcular nuevo tamaño
+        # Calcular nuevo tamaño del canvas
         base_size = 400
-        new_size = int(base_size * zoom_percent / 100)
+        new_size = int(base_size * self.zoom_factor)
         
-        self.svg_widget.setFixedSize(new_size, new_size)
+        self.canvas.setFixedSize(new_size, new_size)
+        self.canvas.set_zoom(self.zoom_factor)
+        self.canvas.update()
+        
+        print(f"🔍 Zoom: {zoom_percent}%")
     
     def auto_refresh(self):
         """Refresh automático (placeholder por ahora)"""
-        # En el futuro aquí podríamos detectar cambios automáticamente
         pass
     
     def get_current_svg(self) -> str:
         """Obtiene el SVG actual para exportación"""
-        return self.current_svg_content
+        return self.generate_svg_from_current_geometry()
     
-    def export_current_view(self, format_type: str = "svg") -> str:
-        """Exporta la vista actual"""
+    def generate_svg_from_current_geometry(self) -> str:
+        """Genera SVG desde la geometría actual"""
         try:
-            if format_type.lower() == "svg":
-                return self.current_svg_content
-            elif format_type.lower() == "png":
-                # TODO: Implementar conversión SVG -> PNG
-                return "PNG export not implemented yet"
-            else:
-                return f"Format {format_type} not supported"
+            if not self.current_geometry:
+                return self.get_default_svg()
+            
+            # Grid
+            grid_svg = self.generate_grid_svg() if self.show_grid else ""
+            
+            # Geometría principal
+            geometry_svg = self.generate_geometry_svg(self.current_geometry)
+            
+            # Información
+            info_svg = self.generate_info_svg() if self.show_info else ""
+            
+            # SVG completo
+            svg_content = f'''<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" 
+     width="{self.viewport_size[0]}" height="{self.viewport_size[1]}" 
+     viewBox="0 0 {self.viewport_size[0]} {self.viewport_size[1]}"
+     style="background: black;">
+  
+  {grid_svg}
+  {geometry_svg}
+  {info_svg}
+  
+</svg>'''
+            
+            return svg_content
+            
         except Exception as e:
-            return f"Export error: {e}"
+            print(f"❌ Error generando SVG: {e}")
+            return self.get_error_svg(str(e))
+    
+    def generate_geometry_svg(self, geometry_data) -> str:
+        """Genera SVG de la geometría"""
+        if hasattr(geometry_data, 'radius'):
+            # Círculo
+            center = getattr(geometry_data, 'center', (0, 0))
+            if isinstance(center, (list, tuple)) and len(center) >= 2:
+                cx = 512 + center[0]  # Centrar en el viewport
+                cy = 512 + center[1]
+            else:
+                cx, cy = 512, 512
+            
+            radius = geometry_data.radius
+            return f'<circle cx="{cx}" cy="{cy}" r="{radius}" fill="white" opacity="0.8"/>'
+        
+        return '<circle cx="512" cy="512" r="100" fill="white" opacity="0.5"/>'
+    
+    def generate_grid_svg(self) -> str:
+        """Genera grid SVG"""
+        lines = []
+        grid_size = 64
+        width, height = self.viewport_size
+        
+        for x in range(0, width + 1, grid_size):
+            opacity = "0.3" if x % (grid_size * 4) == 0 else "0.1"
+            lines.append(f'<line x1="{x}" y1="0" x2="{x}" y2="{height}" stroke="white" stroke-width="1" opacity="{opacity}"/>')
+        
+        for y in range(0, height + 1, grid_size):
+            opacity = "0.3" if y % (grid_size * 4) == 0 else "0.1"
+            lines.append(f'<line x1="0" y1="{y}" x2="{width}" y2="{y}" stroke="white" stroke-width="1" opacity="{opacity}"/>')
+        
+        return "\n  ".join(lines)
+    
+    def generate_info_svg(self) -> str:
+        """Genera información SVG"""
+        from datetime import datetime
+        
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        
+        info_text = "GoboFlow"
+        if self.current_geometry and hasattr(self.current_geometry, 'radius'):
+            info_text = f"Radio: {self.current_geometry.radius:.1f}px"
+        
+        return f'''
+  <g opacity="0.8">
+    <rect x="10" y="10" width="300" height="80" fill="black" opacity="0.7" rx="5"/>
+    <text x="20" y="30" fill="white" font-family="Arial" font-size="14" font-weight="bold">
+      GoboFlow v0.1.0
+    </text>
+    <text x="20" y="50" fill="#ccc" font-family="Arial" font-size="12">
+      {info_text}
+    </text>
+    <text x="20" y="70" fill="#aaa" font-family="Arial" font-size="10">
+      Generado: {timestamp}
+    </text>
+  </g>'''
+    
+    def get_default_svg(self) -> str:
+        """SVG por defecto"""
+        return f'''<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" 
+     width="{self.viewport_size[0]}" height="{self.viewport_size[1]}" 
+     viewBox="0 0 {self.viewport_size[0]} {self.viewport_size[1]}"
+     style="background: black;">
+  
+  <g opacity="0.6">
+    <circle cx="512" cy="512" r="200" fill="none" stroke="white" stroke-width="2" stroke-dasharray="10,5"/>
+    <text x="512" y="480" fill="white" font-family="Arial" font-size="24" text-anchor="middle" font-weight="bold">
+      GoboFlow
+    </text>
+    <text x="512" y="510" fill="#ccc" font-family="Arial" font-size="16" text-anchor="middle">
+      Editor de Gobos
+    </text>
+    <text x="512" y="540" fill="#aaa" font-family="Arial" font-size="12" text-anchor="middle">
+      Conecta nodos para generar geometría
+    </text>
+  </g>
+  
+</svg>'''
+    
+    def get_error_svg(self, error: str) -> str:
+        """SVG de error"""
+        return f'''<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" 
+     width="{self.viewport_size[0]}" height="{self.viewport_size[1]}" 
+     viewBox="0 0 {self.viewport_size[0]} {self.viewport_size[1]}"
+     style="background: black;">
+  
+  <g opacity="0.8">
+    <circle cx="512" cy="512" r="100" fill="none" stroke="red" stroke-width="3"/>
+    <text x="512" y="480" fill="red" font-family="Arial" font-size="20" text-anchor="middle" font-weight="bold">
+      Error
+    </text>
+    <text x="512" y="510" fill="#ff6666" font-family="Arial" font-size="12" text-anchor="middle">
+      {error[:50]}
+    </text>
+  </g>
+  
+</svg>'''
+
+class CanvasWidget(QWidget):
+    """Widget canvas que dibuja usando QPainter"""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.geometry_data = None
+        self.show_grid = False
+        self.show_info = True
+        self.zoom_factor = 1.0
+        
+        self.setStyleSheet("background: black; border: 2px solid #666; border-radius: 4px;")
+    
+    def set_geometry(self, geometry_data):
+        self.geometry_data = geometry_data
+    
+    def set_grid(self, show):
+        self.show_grid = show
+    
+    def set_info(self, show):
+        self.show_info = show
+    
+    def set_zoom(self, zoom):
+        self.zoom_factor = zoom
+    
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        
+        # Fondo negro
+        painter.fillRect(self.rect(), QColor(0, 0, 0))
+        
+        # Calcular centro
+        center_x = self.width() // 2
+        center_y = self.height() // 2
+        
+        # Dibujar grid si está activado
+        if self.show_grid:
+            self.draw_grid(painter)
+        
+        # Dibujar geometría
+        if self.geometry_data:
+            self.draw_geometry(painter, center_x, center_y)
+        else:
+            self.draw_placeholder(painter, center_x, center_y)
+        
+        # Dibujar información
+        if self.show_info:
+            self.draw_info(painter)
+    
+    def draw_grid(self, painter):
+        """Dibuja la grilla"""
+        pen = QPen(QColor(60, 60, 60), 1)
+        painter.setPen(pen)
+        
+        grid_size = int(20 * self.zoom_factor)
+        if grid_size < 5:
+            grid_size = 5
+        
+        # Líneas verticales
+        x = 0
+        while x < self.width():
+            painter.drawLine(x, 0, x, self.height())
+            x += grid_size
+        
+        # Líneas horizontales
+        y = 0
+        while y < self.height():
+            painter.drawLine(0, y, self.width(), y)
+            y += grid_size
+    
+    def draw_geometry(self, painter, center_x, center_y):
+        """Dibuja la geometría"""
+        if hasattr(self.geometry_data, 'radius'):
+            # Dibujar círculo
+            radius = self.geometry_data.radius * self.zoom_factor
+            
+            # Centro del círculo
+            offset_x = offset_y = 0
+            if hasattr(self.geometry_data, 'center'):
+                center = self.geometry_data.center
+                if isinstance(center, (list, tuple)) and len(center) >= 2:
+                    offset_x = center[0] * self.zoom_factor
+                    offset_y = center[1] * self.zoom_factor
+            elif hasattr(self.geometry_data, 'circle_center'):
+                center = self.geometry_data.circle_center
+                if isinstance(center, (list, tuple)) and len(center) >= 2:
+                    # Para circle_center, usar coordenadas directamente sin offset
+                    center_x = center[0] * self.zoom_factor * self.width() / 1024
+                    center_y = center[1] * self.zoom_factor * self.height() / 1024
+                    offset_x = offset_y = 0
+            
+            # Configurar estilo
+            pen = QPen(QColor(255, 255, 255), 2)
+            brush = QBrush(QColor(255, 255, 255, 200))
+            painter.setPen(pen)
+            painter.setBrush(brush)
+            
+            # Dibujar círculo
+            circle_x = center_x + offset_x - radius
+            circle_y = center_y + offset_y - radius
+            painter.drawEllipse(int(circle_x), int(circle_y), int(radius * 2), int(radius * 2))
+            
+        else:
+            # Geometría desconocida - dibujar placeholder
+            self.draw_placeholder(painter, center_x, center_y)
+    
+    def draw_placeholder(self, painter, center_x, center_y):
+        """Dibuja placeholder cuando no hay geometría"""
+        pen = QPen(QColor(100, 100, 100), 2)
+        pen.setStyle(Qt.PenStyle.DashLine)
+        painter.setPen(pen)
+        
+        # Círculo punteado
+        radius = int(100 * self.zoom_factor)
+        painter.drawEllipse(center_x - radius, center_y - radius, radius * 2, radius * 2)
+        
+        # Texto
+        if self.zoom_factor >= 0.5:  # Solo mostrar texto si hay suficiente zoom
+            painter.setPen(QPen(QColor(150, 150, 150), 1))
+            font = QFont("Arial", max(8, int(16 * self.zoom_factor)), QFont.Weight.Bold)
+            painter.setFont(font)
+            painter.drawText(center_x - 50, center_y, "GoboFlow")
+    
+    def draw_info(self, painter):
+        """Dibuja información superpuesta"""
+        if not self.geometry_data:
+            return
+        
+        # Fondo para el texto
+        info_rect = QRectF(10, 10, 200, 60)
+        painter.fillRect(info_rect, QColor(0, 0, 0, 180))
+        
+        # Texto de información
+        painter.setPen(QPen(QColor(255, 255, 255), 1))
+        font = QFont("Arial", 10, QFont.Weight.Bold)
+        painter.setFont(font)
+        
+        y_pos = 25
+        painter.drawText(15, y_pos, "GoboFlow")
+        
+        if hasattr(self.geometry_data, 'radius'):
+            y_pos += 15
+            painter.drawText(15, y_pos, f"Radio: {self.geometry_data.radius:.1f}px")
+            
+            if hasattr(self.geometry_data, 'center'):
+                center = self.geometry_data.center
+                if isinstance(center, (list, tuple)) and len(center) >= 2:
+                    y_pos += 15
+                    painter.drawText(15, y_pos, f"Centro: ({center[0]:.1f}, {center[1]:.1f})")
 
 # Factory function
 def create_viewport_widget(parent=None) -> ViewportWidget:

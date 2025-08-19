@@ -20,6 +20,25 @@ except ImportError:
     print("⚠️ PyQt6 no disponible")
 
 # Imports de GoboFlow
+
+try:
+    from ui.viewport_widget import create_viewport_widget
+    VIEWPORT_AVAILABLE = True
+    print("✅ Viewport widget disponible")
+except ImportError as e:
+    VIEWPORT_AVAILABLE = False
+    create_viewport_widget = None
+    print(f"⚠️ Viewport widget no disponible: {e}")
+
+try:
+    from ui.properties_panel import create_properties_panel as create_props_panel
+    PROPERTIES_AVAILABLE = True
+    print("✅ Properties panel disponible")
+except ImportError as e:
+    PROPERTIES_AVAILABLE = False
+    create_props_panel = None
+    print(f"⚠️ Properties panel no disponible: {e}")
+
 try:
     from config import APP_NAME, APP_VERSION, USER_CONFIG_DIR
 except ImportError:
