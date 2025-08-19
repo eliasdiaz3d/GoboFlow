@@ -1,412 +1,621 @@
 """
-Clases base para diferentes tipos de nodos en GoboFlow
-Extiende la clase Node del core con funcionalidades específicas
+Nodos base para GoboFlow
+Implementaciones básicas de nodos comunes
 """
 
-from typing import Dict, List, Any, Optional, Tuple
-from abc import ABC, abstractmethod
-import math
+from typing import Dict, Any, Optional, List
+import uuid
+from abc import abstractmethod
 
 from core.node_system import Node
 from core.socket_types import (
-    GeometryType, NumberType, VectorType, ColorType, 
-    BooleanType, StringType, ImageType
+    NUMBER, GEOMETRY, COLOR, STRING, BOOLEAN, VECTOR2D,
+    auto_convert_value
 )
 
-class BaseNode(Node):
+class ParameterNode(Node):
     """
-    Extensión de Node con funcionalidades comunes para GoboFlow
+    Clase base para nodos de parámetros de entrada
     """
     
-    def __init__(self, title: Optional[str] = None):
-        super().__init__(title)
-        self._parameters = {}  # Parámetros internos del nodo
+    NODE_CATEGORY = "parameters"
+    
+    def __init__(self, title: Optional[str] = None, parameter_type=NUMBER, default_value=None):
+        # Establecer el tipo antes de llamar a super().__init__
+        self.parameter_type = parameter_type
+        self.parameter_value = default_value or self._get_default_value()
         
-    def set_parameter(self, name: str, value: Any):
-        """Establece un parámetro interno del nodo"""
-        if self._parameters.get(name) != value:
-            self._parameters[name] = value
-            self.mark_dirty()
-    
-    def get_parameter(self, name: str, default: Any = None) -> Any:
-        """Obtiene un parámetro interno del nodo"""
-        return self._parameters.get(name, default)
-    
-    def get_all_parameters(self) -> Dict[str, Any]:
-        """Obtiene todos los parámetros del nodo"""
-        return self._parameters.copy()
-    
-    def to_dict(self) -> Dict[str, Any]:
-        """Serializa el nodo incluyendo parámetros"""
-        data = super().to_dict()
-        data['parameters'] = self._parameters.copy()
-        return data
-    
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'BaseNode':
-        """Deserializa un nodo incluyendo parámetros"""
-        node = super().from_dict(data)
-        node._parameters = data.get('parameters', {})
-        return node
-
-class GeneratorNode(BaseNode):
-    """
-    Clase base para nodos generadores (crean geometría desde cero)
-    """
-    
-    NODE_CATEGORY = "generators"
-    
-    def __init__(self, title: Optional[str] = None):
+        # Ahora llamar a super().__init__ que llamará a _init_sockets()
         super().__init__(title)
         
+    def _get_default_value(self):
+        """Obtiene el valor por defecto según el tipo"""
+        return auto_convert_value(None, self.parameter_type)
+    
     def _init_sockets(self):
-        """Los generadores típicamente solo tienen outputs de geometría"""
-        self.add_output("geometry", GeometryType())
-        
-    def generate_geometry(self) -> Any:
-        """
-        Método abstracto para generar geometría.
-        Debe ser implementado por subclases.
-        """
-        raise NotImplementedError("Subclasses must implement generate_geometry")
+        """Inicializa los sockets del nodo parámetro"""
+        # Solo output
+        self.add_output("value", self.parameter_type)
     
     def compute(self) -> Dict[str, Any]:
-        """Implementación base del compute para generadores"""
-        geometry = self.generate_geometry()
-        return {"geometry": geometry}
+        """Retorna el valor del parámetro"""
+        return {"value": self.parameter_value}
+    
+    def set_parameter(self, name: str, value: Any):
+        """Establece el valor del parámetro"""
+        if name == "value":
+            self.parameter_value = auto_convert_value(value, self.parameter_type)
+            self.mark_dirty()
+    
+    def get_parameter_value(self):
+        """Obtiene el valor actual del parámetro"""
+        return self.parameter_value
 
-class ModifierNode(BaseNode):
+class NumberParameterNode(ParameterNode):
     """
-    Clase base para nodos modificadores (transforman geometría existente)
+    Nodo de parámetro numérico
+    """
+    
+    NODE_TYPE = "number_parameter"
+    NODE_TITLE = "Number"
+    NODE_DESCRIPTION = "Parámetro numérico de entrada"
+    
+    def __init__(self, title: Optional[str] = None):
+        super().__init__(title, NUMBER, 0.0)
+
+class VectorParameterNode(ParameterNode):
+    """
+    Nodo de parámetro de vector 2D
+    """
+    
+    NODE_TYPE = "vector_parameter"
+    NODE_TITLE = "Vector"
+    NODE_DESCRIPTION = "Parámetro de vector 2D"
+    
+    def __init__(self, title: Optional[str] = None):
+        super().__init__(title, VECTOR2D, [0.0, 0.0])
+
+class ColorParameterNode(ParameterNode):
+    """
+    Nodo de parámetro de color
+    """
+    
+    NODE_TYPE = "color_parameter"
+    NODE_TITLE = "Color"
+    NODE_DESCRIPTION = "Parámetro de color"
+    
+    def __init__(self, title: Optional[str] = None):
+        super().__init__(title, COLOR, {'r': 1.0, 'g': 1.0, 'b': 1.0, 'a': 1.0})
+
+class ViewerNode(Node):
+    """
+    Nodo visor para mostrar resultados
+    """
+    
+    NODE_TYPE = "viewer"
+    NODE_TITLE = "Viewer"
+    NODE_CATEGORY = "outputs"
+    NODE_DESCRIPTION = "Visualiza datos de entrada"
+    
+    def __init__(self, title: Optional[str] = None):
+        super().__init__(title)
+        self._last_data = None
+        self._data_type = None
+    
+    def _init_sockets(self):
+        """Inicializa los sockets del visor"""
+        # Acepta geometría como entrada principal
+        self.add_input("geometry", GEOMETRY, None)
+        # Opcionalmente acepta otros tipos
+        self.add_input("color", COLOR, None)
+        self.add_input("opacity", NUMBER, 1.0)
+    
+    def compute(self) -> Dict[str, Any]:
+        """Procesa los datos de entrada para visualización"""
+        geometry = self.get_input_value("geometry")
+        color = self.get_input_value("color")
+        opacity = self.get_input_value("opacity")
+        
+        # Almacenar datos para visualización
+        self._last_data = geometry
+        self._data_type = type(geometry).__name__ if geometry else "None"
+        
+        # El visor no produce output, solo visualiza
+        return {
+            "display_geometry": geometry,
+            "display_color": color,
+            "display_opacity": opacity
+        }
+    
+    def get_last_data(self):
+        """Obtiene los últimos datos procesados"""
+        return self._last_data
+    
+    def get_data_info(self) -> Dict[str, Any]:
+        """Obtiene información sobre los datos visualizados"""
+        return {
+            "data_type": self._data_type,
+            "has_data": self._last_data is not None,
+            "data": self._last_data
+        }
+
+class TransformNode(Node):
+    """
+    Nodo base para transformaciones geométricas
     """
     
     NODE_CATEGORY = "modifiers"
     
     def __init__(self, title: Optional[str] = None):
         super().__init__(title)
-        
+    
     def _init_sockets(self):
-        """Los modificadores típicamente tienen input y output de geometría"""
-        self.add_input("geometry", GeometryType())
-        self.add_output("geometry", GeometryType())
+        """Inicializa sockets de transformación"""
+        self.add_input("geometry", GEOMETRY, None)
+        self.add_input("translation", VECTOR2D, [0.0, 0.0])
+        self.add_input("rotation", NUMBER, 0.0)
+        self.add_input("scale", VECTOR2D, [1.0, 1.0])
         
-    def modify_geometry(self, geometry: Any) -> Any:
-        """
-        Método abstracto para modificar geometría.
-        Debe ser implementado por subclases.
-        """
-        raise NotImplementedError("Subclasses must implement modify_geometry")
+        self.add_output("geometry", GEOMETRY)
     
     def compute(self) -> Dict[str, Any]:
-        """Implementación base del compute para modificadores"""
-        input_geometry = self.get_input_value("geometry")
-        if input_geometry is None:
+        """Aplica transformaciones a la geometría"""
+        geometry = self.get_input_value("geometry")
+        
+        if geometry is None:
             return {"geometry": None}
-            
-        modified_geometry = self.modify_geometry(input_geometry)
-        return {"geometry": modified_geometry}
-
-class OperationNode(BaseNode):
-    """
-    Clase base para nodos de operaciones (combinan múltiples geometrías)
-    """
-    
-    NODE_CATEGORY = "operations"
-    
-    def __init__(self, title: Optional[str] = None):
-        super().__init__(title)
         
-    def _init_sockets(self):
-        """Las operaciones típicamente tienen múltiples inputs y un output"""
-        self.add_input("geometry_a", GeometryType())
-        self.add_input("geometry_b", GeometryType())
-        self.add_output("geometry", GeometryType())
+        translation = self.get_input_value("translation")
+        rotation = self.get_input_value("rotation")
+        scale = self.get_input_value("scale")
         
-    def perform_operation(self, geometry_a: Any, geometry_b: Any) -> Any:
-        """
-        Método abstracto para realizar operación entre geometrías.
-        Debe ser implementado por subclases.
-        """
-        raise NotImplementedError("Subclasses must implement perform_operation")
-    
-    def compute(self) -> Dict[str, Any]:
-        """Implementación base del compute para operaciones"""
-        geometry_a = self.get_input_value("geometry_a")
-        geometry_b = self.get_input_value("geometry_b")
+        # Aplicar transformaciones
+        transformed_geometry = self.apply_transform(geometry, translation, rotation, scale)
         
-        if geometry_a is None or geometry_b is None:
-            return {"geometry": None}
-            
-        result_geometry = self.perform_operation(geometry_a, geometry_b)
-        return {"geometry": result_geometry}
-
-class InputNode(BaseNode):
-    """
-    Clase base para nodos de entrada (importan datos externos)
-    """
+        return {"geometry": transformed_geometry}
     
-    NODE_CATEGORY = "inputs"
-    
-    def __init__(self, title: Optional[str] = None):
-        super().__init__(title)
-        
-    def _init_sockets(self):
-        """Los nodos de entrada solo tienen outputs"""
-        # Se definirán en subclases según el tipo de entrada
+    @abstractmethod
+    def apply_transform(self, geometry, translation, rotation, scale):
+        """Aplica las transformaciones a la geometría. Debe ser implementado por subclases."""
         pass
-        
-    def load_data(self) -> Any:
-        """
-        Método abstracto para cargar datos externos.
-        Debe ser implementado por subclases.
-        """
-        raise NotImplementedError("Subclasses must implement load_data")
 
-class OutputNode(BaseNode):
+class MergeNode(Node):
     """
-    Clase base para nodos de salida (exportan o muestran datos)
+    Nodo para combinar múltiples geometrías
     """
     
-    NODE_CATEGORY = "outputs"
+    NODE_TYPE = "merge"
+    NODE_TITLE = "Merge"
+    NODE_CATEGORY = "operations"
+    NODE_DESCRIPTION = "Combina múltiples geometrías"
     
     def __init__(self, title: Optional[str] = None):
         super().__init__(title)
-        
+    
     def _init_sockets(self):
-        """Los nodos de salida típicamente solo tienen inputs"""
-        self.add_input("geometry", GeometryType())
+        """Inicializa sockets para merge"""
+        # Múltiples entradas de geometría
+        self.add_input("geometry1", GEOMETRY, None)
+        self.add_input("geometry2", GEOMETRY, None)
+        self.add_input("geometry3", GEOMETRY, None, is_multi=False)
         
-    def export_data(self, data: Any) -> None:
-        """
-        Método abstracto para exportar o mostrar datos.
-        Debe ser implementado por subclases.
-        """
-        raise NotImplementedError("Subclasses must implement export_data")
+        self.add_output("geometry", GEOMETRY)
     
     def compute(self) -> Dict[str, Any]:
-        """Los nodos de salida procesan pero no retornan datos"""
-        input_data = self.get_input_value("geometry")
-        if input_data is not None:
-            self.export_data(input_data)
-        return {}
+        """Combina las geometrías de entrada"""
+        geometries = []
+        
+        # Recopilar todas las geometrías no nulas
+        for i in range(1, 4):
+            geom = self.get_input_value(f"geometry{i}")
+            if geom is not None:
+                geometries.append(geom)
+        
+        if not geometries:
+            return {"geometry": None}
+        
+        # Combinar geometrías (implementación básica)
+        merged_geometry = self.merge_geometries(geometries)
+        
+        return {"geometry": merged_geometry}
+    
+    def merge_geometries(self, geometries: List[Any]) -> Any:
+        """
+        Combina una lista de geometrías.
+        Implementación básica - debe ser extendida según el tipo de geometría.
+        """
+        if len(geometries) == 1:
+            return geometries[0]
+        
+        # Para ahora, retornar la primera geometría
+        # TODO: Implementar merge real según el tipo de geometría
+        return geometries[0]
 
-class MaterialNode(BaseNode):
+class SplitNode(Node):
     """
-    Clase base para nodos de material y color
+    Nodo para separar componentes de una geometría
     """
     
-    NODE_CATEGORY = "materials"
+    NODE_TYPE = "split"
+    NODE_TITLE = "Split"
+    NODE_CATEGORY = "operations"
+    NODE_DESCRIPTION = "Separa componentes de una geometría"
     
     def __init__(self, title: Optional[str] = None):
         super().__init__(title)
-        
+    
     def _init_sockets(self):
-        """Los nodos de material típicamente outputean color"""
-        self.add_output("color", ColorType())
+        """Inicializa sockets para split"""
+        self.add_input("geometry", GEOMETRY, None)
+        self.add_input("method", STRING, "components")  # components, paths, etc.
         
-    def compute_color(self, u: float = 0.0, v: float = 0.0) -> Tuple[float, float, float, float]:
-        """
-        Método abstracto para computar color en coordenadas UV.
-        Retorna RGBA (0-1 range).
-        """
-        raise NotImplementedError("Subclases must implement compute_color")
+        # Múltiples outputs
+        self.add_output("output1", GEOMETRY)
+        self.add_output("output2", GEOMETRY)
+        self.add_output("output3", GEOMETRY)
+        self.add_output("count", NUMBER)
     
     def compute(self) -> Dict[str, Any]:
-        """Implementación base para nodos de material"""
-        # Para nodos de material simple, computar en UV (0,0)
-        color = self.compute_color(0.0, 0.0)
-        return {"color": color}
+        """Separa la geometría de entrada"""
+        geometry = self.get_input_value("geometry")
+        method = self.get_input_value("method")
+        
+        if geometry is None:
+            return {
+                "output1": None,
+                "output2": None,
+                "output3": None,
+                "count": 0
+            }
+        
+        # Separar según el método
+        components = self.split_geometry(geometry, method)
+        
+        # Asignar a outputs
+        result = {}
+        for i in range(1, 4):
+            if i <= len(components):
+                result[f"output{i}"] = components[i-1]
+            else:
+                result[f"output{i}"] = None
+        
+        result["count"] = len(components)
+        
+        return result
+    
+    def split_geometry(self, geometry: Any, method: str) -> List[Any]:
+        """
+        Separa una geometría según el método especificado.
+        Implementación básica - debe ser extendida.
+        """
+        # Por ahora, retornar la geometría original como único componente
+        return [geometry] if geometry else []
 
-class ParameterNode(BaseNode):
+class InfoNode(Node):
     """
-    Clase base para nodos de parámetros (exponen valores ajustables)
+    Nodo para obtener información sobre geometrías
     """
     
-    NODE_CATEGORY = "parameters"
+    NODE_TYPE = "info"
+    NODE_TITLE = "Info"
+    NODE_CATEGORY = "utilities"
+    NODE_DESCRIPTION = "Obtiene información sobre geometrías"
     
-    def __init__(self, title: Optional[str] = None, value_type: Any = None):
-        self.value_type = value_type or NumberType()  # Asignar antes del super().__init__
+    def __init__(self, title: Optional[str] = None):
         super().__init__(title)
-        
+    
     def _init_sockets(self):
-        """Los nodos de parámetro solo tienen output del tipo especificado"""
-        self.add_output("value", self.value_type)
+        """Inicializa sockets para info"""
+        self.add_input("geometry", GEOMETRY, None)
         
-    def get_parameter_value(self) -> Any:
-        """Obtiene el valor del parámetro"""
-        raise NotImplementedError("Subclases must implement get_parameter_value")
+        # Outputs de información
+        self.add_output("area", NUMBER)
+        self.add_output("perimeter", NUMBER)
+        self.add_output("center", VECTOR2D)
+        self.add_output("bounds", VECTOR2D)  # width, height
+        self.add_output("vertex_count", NUMBER)
     
     def compute(self) -> Dict[str, Any]:
-        """Retorna el valor del parámetro"""
-        value = self.get_parameter_value()
-        return {"value": value}
+        """Calcula información sobre la geometría"""
+        geometry = self.get_input_value("geometry")
+        
+        if geometry is None:
+            return {
+                "area": 0.0,
+                "perimeter": 0.0,
+                "center": [0.0, 0.0],
+                "bounds": [0.0, 0.0],
+                "vertex_count": 0
+            }
+        
+        # Calcular información
+        info = self.calculate_geometry_info(geometry)
+        
+        return info
+    
+    def calculate_geometry_info(self, geometry: Any) -> Dict[str, Any]:
+        """
+        Calcula información detallada sobre una geometría.
+        Implementación básica - debe ser extendida según el tipo de geometría.
+        """
+        info = {
+            "area": 0.0,
+            "perimeter": 0.0,
+            "center": [0.0, 0.0],
+            "bounds": [0.0, 0.0],
+            "vertex_count": 0
+        }
+        
+        # Si la geometría tiene métodos específicos, usarlos
+        if hasattr(geometry, 'area'):
+            info["area"] = float(geometry.area)
+        
+        if hasattr(geometry, 'perimeter'):
+            info["perimeter"] = float(geometry.perimeter)
+        
+        if hasattr(geometry, 'center'):
+            center = geometry.center
+            if isinstance(center, (list, tuple)):
+                info["center"] = [float(center[0]), float(center[1])]
+        
+        if hasattr(geometry, 'bbox'):
+            bbox = geometry.bbox
+            if bbox and len(bbox) >= 4:
+                width = bbox[2] - bbox[0]
+                height = bbox[3] - bbox[1]
+                info["bounds"] = [float(width), float(height)]
+        
+        if hasattr(geometry, 'vertices'):
+            info["vertex_count"] = len(geometry.vertices)
+        
+        return info
 
-class MathNode(BaseNode):
+class ConditionalNode(Node):
     """
-    Clase base para nodos matemáticos
+    Nodo condicional que selecciona entre dos entradas
     """
     
+    NODE_TYPE = "conditional"
+    NODE_TITLE = "Switch"
+    NODE_CATEGORY = "logic"
+    NODE_DESCRIPTION = "Selecciona entre dos entradas basado en una condición"
+    
+    def __init__(self, title: Optional[str] = None):
+        super().__init__(title)
+    
+    def _init_sockets(self):
+        """Inicializa sockets para condicional"""
+        self.add_input("condition", BOOLEAN, False)
+        self.add_input("true_input", GEOMETRY, None)
+        self.add_input("false_input", GEOMETRY, None)
+        
+        self.add_output("output", GEOMETRY)
+    
+    def compute(self) -> Dict[str, Any]:
+        """Selecciona la entrada según la condición"""
+        condition = self.get_input_value("condition")
+        
+        if condition:
+            selected = self.get_input_value("true_input")
+        else:
+            selected = self.get_input_value("false_input")
+        
+        return {"output": selected}
+
+class RandomNode(Node):
+    """
+    Nodo generador de números aleatorios
+    """
+    
+    NODE_TYPE = "random"
+    NODE_TITLE = "Random"
+    NODE_CATEGORY = "generators"
+    NODE_DESCRIPTION = "Genera números aleatorios"
+    
+    def __init__(self, title: Optional[str] = None):
+        super().__init__(title)
+        self._last_seed = None
+    
+    def _init_sockets(self):
+        """Inicializa sockets para random"""
+        self.add_input("seed", NUMBER, 42)
+        self.add_input("min_value", NUMBER, 0.0)
+        self.add_input("max_value", NUMBER, 1.0)
+        
+        self.add_output("value", NUMBER)
+        self.add_output("vector", VECTOR2D)
+    
+    def compute(self) -> Dict[str, Any]:
+        """Genera valores aleatorios"""
+        import random
+        
+        seed = int(self.get_input_value("seed"))
+        min_val = self.get_input_value("min_value")
+        max_val = self.get_input_value("max_value")
+        
+        # Usar seed para resultados reproducibles
+        if seed != self._last_seed:
+            random.seed(seed)
+            self._last_seed = seed
+        
+        # Generar valores
+        random_value = random.uniform(min_val, max_val)
+        random_vector = [
+            random.uniform(min_val, max_val),
+            random.uniform(min_val, max_val)
+        ]
+        
+        return {
+            "value": random_value,
+            "vector": random_vector
+        }
+
+class MathNode(Node):
+    """
+    Nodo para operaciones matemáticas básicas
+    """
+    
+    NODE_TYPE = "math"
+    NODE_TITLE = "Math"
     NODE_CATEGORY = "math"
+    NODE_DESCRIPTION = "Operaciones matemáticas básicas"
     
     def __init__(self, title: Optional[str] = None):
         super().__init__(title)
-        
+        self.operation = "add"  # add, subtract, multiply, divide, power, etc.
+    
     def _init_sockets(self):
-        """Nodos matemáticos típicamente tienen inputs numéricos y output numérico"""
-        self.add_input("a", NumberType(), default_value=0.0)
-        self.add_input("b", NumberType(), default_value=0.0)
-        self.add_output("result", NumberType())
+        """Inicializa sockets para math"""
+        self.add_input("a", NUMBER, 0.0)
+        self.add_input("b", NUMBER, 0.0)
+        self.add_input("operation", STRING, "add")
         
-    def perform_math_operation(self, a: float, b: float) -> float:
-        """
-        Método abstracto para realizar operación matemática.
-        """
-        raise NotImplementedError("Subclases must implement perform_math_operation")
+        self.add_output("result", NUMBER)
     
     def compute(self) -> Dict[str, Any]:
-        """Implementación base para nodos matemáticos"""
+        """Realiza operación matemática"""
+        import math
+        
         a = self.get_input_value("a")
         b = self.get_input_value("b")
+        operation = self.get_input_value("operation").lower()
         
-        # Convertir a float si es necesario
+        result = 0.0
+        
         try:
-            a = float(a) if a is not None else 0.0
-            b = float(b) if b is not None else 0.0
-        except (ValueError, TypeError):
-            a, b = 0.0, 0.0
-            
-        result = self.perform_math_operation(a, b)
+            if operation == "add":
+                result = a + b
+            elif operation == "subtract":
+                result = a - b
+            elif operation == "multiply":
+                result = a * b
+            elif operation == "divide":
+                result = a / b if b != 0 else 0.0
+            elif operation == "power":
+                result = pow(a, b)
+            elif operation == "modulo":
+                result = a % b if b != 0 else 0.0
+            elif operation == "min":
+                result = min(a, b)
+            elif operation == "max":
+                result = max(a, b)
+            elif operation == "sin":
+                result = math.sin(a)
+            elif operation == "cos":
+                result = math.cos(a)
+            elif operation == "tan":
+                result = math.tan(a)
+            elif operation == "sqrt":
+                result = math.sqrt(abs(a))
+            elif operation == "abs":
+                result = abs(a)
+            elif operation == "floor":
+                result = math.floor(a)
+            elif operation == "ceil":
+                result = math.ceil(a)
+            else:
+                result = a  # Operación no reconocida, devolver primer valor
+                
+        except (ValueError, ZeroDivisionError, OverflowError):
+            result = 0.0
+        
         return {"result": result}
+    
+    def set_operation(self, operation: str):
+        """Establece la operación matemática"""
+        self.operation = operation
+        self.mark_dirty()
 
-class UtilityNode(BaseNode):
-    """
-    Clase base para nodos de utilidad
-    """
-    
-    NODE_CATEGORY = "utility"
-    
-    def __init__(self, title: Optional[str] = None):
-        super().__init__(title)
+# ===========================================
+# UTILIDADES PARA NODOS BASE
+# ===========================================
 
-# Clases específicas comunes que pueden ser útiles
+def create_parameter_node(param_type: str, value: Any = None, title: str = None):
+    """Factory function para crear nodos de parámetros"""
+    if param_type.lower() == "number":
+        node = NumberParameterNode(title)
+        if value is not None:
+            node.set_parameter("value", value)
+        return node
+    elif param_type.lower() == "vector":
+        node = VectorParameterNode(title)
+        if value is not None:
+            node.set_parameter("value", value)
+        return node
+    elif param_type.lower() == "color":
+        node = ColorParameterNode(title)
+        if value is not None:
+            node.set_parameter("value", value)
+        return node
+    else:
+        raise ValueError(f"Tipo de parámetro no soportado: {param_type}")
 
-class NumberParameterNode(ParameterNode):
-    """Nodo de parámetro numérico"""
-    
-    NODE_TYPE = "number_parameter"
-    NODE_TITLE = "Number"
-    
-    def __init__(self, title: Optional[str] = None):
-        super().__init__(title, NumberType())
-        self.set_parameter("value", 0.0)
-        self.set_parameter("min_value", -1000.0)
-        self.set_parameter("max_value", 1000.0)
-        self.set_parameter("step", 0.1)
-        
-    def get_parameter_value(self) -> float:
-        return self.get_parameter("value", 0.0)
+def get_base_node_types():
+    """Retorna lista de todos los tipos de nodos base disponibles"""
+    return [
+        NumberParameterNode,
+        VectorParameterNode,
+        ColorParameterNode,
+        ViewerNode,
+        MergeNode,
+        SplitNode,
+        InfoNode,
+        ConditionalNode,
+        RandomNode,
+        MathNode
+    ]
 
-class VectorParameterNode(ParameterNode):
-    """Nodo de parámetro vectorial"""
+def create_node_by_type(node_type: str, title: str = None):
+    """Factory function para crear nodos por tipo"""
+    node_map = {
+        "number_parameter": NumberParameterNode,
+        "vector_parameter": VectorParameterNode,
+        "color_parameter": ColorParameterNode,
+        "viewer": ViewerNode,
+        "merge": MergeNode,
+        "split": SplitNode,
+        "info": InfoNode,
+        "conditional": ConditionalNode,
+        "random": RandomNode,
+        "math": MathNode
+    }
     
-    NODE_TYPE = "vector_parameter"
-    NODE_TITLE = "Vector"
-    
-    def __init__(self, title: Optional[str] = None):
-        super().__init__(title, VectorType())
-        self.set_parameter("x", 0.0)
-        self.set_parameter("y", 0.0)
-        self.set_parameter("z", 0.0)
-        
-    def get_parameter_value(self) -> Tuple[float, float, float]:
-        x = self.get_parameter("x", 0.0)
-        y = self.get_parameter("y", 0.0)
-        z = self.get_parameter("z", 0.0)
-        return (x, y, z)
+    if node_type in node_map:
+        return node_map[node_type](title)
+    else:
+        raise ValueError(f"Tipo de nodo no encontrado: {node_type}")
 
-class ColorParameterNode(ParameterNode):
-    """Nodo de parámetro de color"""
-    
-    NODE_TYPE = "color_parameter"
-    NODE_TITLE = "Color"
-    
-    def __init__(self, title: Optional[str] = None):
-        super().__init__(title, ColorType())
-        self.set_parameter("r", 1.0)
-        self.set_parameter("g", 1.0)
-        self.set_parameter("b", 1.0)
-        self.set_parameter("a", 1.0)
-        
-    def get_parameter_value(self) -> Tuple[float, float, float, float]:
-        r = self.get_parameter("r", 1.0)
-        g = self.get_parameter("g", 1.0)
-        b = self.get_parameter("b", 1.0)
-        a = self.get_parameter("a", 1.0)
-        return (r, g, b, a)
+# ===========================================
+# PRUEBAS DE NODOS BASE
+# ===========================================
 
-class AddNode(MathNode):
-    """Nodo de suma"""
+def test_base_nodes():
+    """Pruebas básicas de los nodos base"""
+    print("🧪 Probando nodos base...")
     
-    NODE_TYPE = "add"
-    NODE_TITLE = "Add"
+    # Probar NumberParameterNode
+    num_node = NumberParameterNode("Test Number")
+    num_node.set_parameter("value", 42.5)
+    result = num_node.compute()
+    assert result["value"] == 42.5
+    print("✅ NumberParameterNode OK")
     
-    def perform_math_operation(self, a: float, b: float) -> float:
-        return a + b
+    # Probar ViewerNode
+    viewer = ViewerNode("Test Viewer")
+    viewer_result = viewer.compute()
+    assert "display_geometry" in viewer_result
+    print("✅ ViewerNode OK")
+    
+    # Probar MathNode
+    math_node = MathNode("Test Math")
+    # Simular entrada
+    math_node.add_input("a", NUMBER, 5.0)
+    math_node.add_input("b", NUMBER, 3.0)
+    math_result = math_node.compute()
+    assert math_result["result"] == 8.0  # 5 + 3
+    print("✅ MathNode OK")
+    
+    print("🎉 Todos los tests de nodos base pasaron!")
 
-class SubtractNode(MathNode):
-    """Nodo de resta"""
-    
-    NODE_TYPE = "subtract"
-    NODE_TITLE = "Subtract"
-    
-    def perform_math_operation(self, a: float, b: float) -> float:
-        return a - b
-
-class MultiplyNode(MathNode):
-    """Nodo de multiplicación"""
-    
-    NODE_TYPE = "multiply"
-    NODE_TITLE = "Multiply"
-    
-    def perform_math_operation(self, a: float, b: float) -> float:
-        return a * b
-
-class DivideNode(MathNode):
-    """Nodo de división"""
-    
-    NODE_TYPE = "divide"
-    NODE_TITLE = "Divide"
-    
-    def perform_math_operation(self, a: float, b: float) -> float:
-        return a / b if b != 0 else 0.0
-
-class ViewerNode(OutputNode):
-    """Nodo visor básico"""
-    
-    NODE_TYPE = "viewer"
-    NODE_TITLE = "Viewer"
-    
-    def __init__(self, title: Optional[str] = None):
-        super().__init__(title)
-        self._last_data = None
-        
-    def export_data(self, data: Any) -> None:
-        """Almacena los datos para visualización"""
-        self._last_data = data
-        # TODO: Notificar a la UI para actualizar la vista
-        
-    def get_last_data(self) -> Any:
-        """Obtiene los últimos datos visualizados"""
-        return self._last_data
-
-# Diccionario de registro de nodos base
-BASE_NODE_REGISTRY = {
-    "number_parameter": NumberParameterNode,
-    "vector_parameter": VectorParameterNode, 
-    "color_parameter": ColorParameterNode,
-    "add": AddNode,
-    "subtract": SubtractNode,
-    "multiply": MultiplyNode,
-    "divide": DivideNode,
-    "viewer": ViewerNode,
-}
+if __name__ == "__main__":
+    test_base_nodes()

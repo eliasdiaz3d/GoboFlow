@@ -1,521 +1,790 @@
 """
-Editor visual de nodos para GoboFlow - Version Completa
-Permite crear, conectar y editar nodos de forma visual
+Widget principal del editor de nodos
+Combina la vista, escena y funcionalidad del editor
 """
 
 import math
-from typing import Dict, List, Optional, Tuple, Any
-from enum import Enum
+from typing import Optional, Dict, List
 
-try:
-    from PyQt6.QtWidgets import (
-        QWidget, QGraphicsView, QGraphicsScene, QGraphicsItem,
-        QGraphicsRectItem, QGraphicsEllipseItem, QGraphicsTextItem,
-        QGraphicsLineItem, QVBoxLayout, QHBoxLayout, QLabel, QMenu
-    )
-    from PyQt6.QtCore import Qt, QRectF, QPointF, pyqtSignal, QPropertyAnimation
-    from PyQt6.QtGui import (
-        QPen, QBrush, QColor, QPainter, QPainterPath, QFont,
-        QLinearGradient, QCursor
-    )
-    PYQT_AVAILABLE = True
-except ImportError:
-    PYQT_AVAILABLE = False
-    class QWidget: pass
-    class QGraphicsView: pass
-    class QGraphicsItem: pass
-    class pyqtSignal: pass
+from PyQt6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QGraphicsView, QGraphicsScene,
+    QToolBar, QPushButton, QLabel, QSlider, QComboBox, QFrame,
+    QMenu, QMenuBar, QStatusBar, QSplitter, QScrollArea, QSpinBox, QDoubleSpinBox
+)
+from PyQt6.QtCore import Qt, QRectF, QPointF, pyqtSignal, QTimer
+from PyQt6.QtGui import (
+    QAction, QPainter, QBrush, QColor, QPen, QWheelEvent, 
+    QMouseEvent, QKeyEvent, QPixmap, QIcon
+)
 
-if PYQT_AVAILABLE:
-    from config import NODE_COLORS, NODE_VISUAL, CONNECTION_VISUAL, DARK_THEME
-    from core.node_system import Node, Socket, Connection, SocketDirection
+from core.node_system import NodeGraph, Node
+from .node_graphics import NodeGraphicsItem, create_node_graphics, NodeTheme
+from .connection_graphics import ConnectionManager, ConnectionGraphicsItem
 
-class NodeState(Enum):
-    """Estados visuales de los nodos"""
-    NORMAL = "normal"
-    SELECTED = "selected"
-    HOVERED = "hovered"
-    PROCESSING = "processing"
-    ERROR = "error"
-
-class SocketGraphics(QGraphicsEllipseItem):
-    """Representación visual de un socket"""
+class NodeEditorScene(QGraphicsScene):
+    """
+    Escena especializada para el editor de nodos
+    """
     
-    def __init__(self, socket: Socket, parent_node: 'NodeGraphics'):
-        super().__init__(parent_node)
-        
-        self.socket = socket
-        self.parent_node = parent_node
-        self.connections: List['ConnectionGraphics'] = []
-        
-        # Configuración visual
-        size = 16  # NODE_VISUAL["socket_size"]
-        self.setRect(-size/2, -size/2, size, size)
-        
-        # Interactividad
-        self.setAcceptHoverEvents(True)
-        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, False)
-        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, False)
-        self.setCursor(QCursor(Qt.CursorShape.CrossCursor))
-        self.setZValue(100)
-        
-        self._update_appearance()
-        
-    def _update_appearance(self):
-        """Actualiza la apariencia del socket"""
-        base_color = self._get_socket_color()
-        
-        pen = QPen(QColor(255, 255, 255), 3)
-        self.setPen(pen)
-        
-        if self.socket.direction == SocketDirection.INPUT:
-            if self.socket.connections:
-                brush = QBrush(base_color)
-            else:
-                brush = QBrush(Qt.BrushStyle.NoBrush)
-        else:
-            brush = QBrush(base_color)
-            
-        self.setBrush(brush)
+    # Señales
+    node_selected = pyqtSignal(object)  # Node
+    node_added = pyqtSignal(object)     # Node
+    node_removed = pyqtSignal(object)   # Node
+    connection_created = pyqtSignal(object)  # Connection
+    connection_removed = pyqtSignal(object) # Connection
     
-    def _get_socket_color(self) -> QColor:
-        """Obtiene el color del socket según su tipo"""
-        socket_type = self.socket.socket_type.__class__.__name__
-        
-        color_map = {
-            "GeometryType": QColor(76, 175, 80),
-            "NumberType": QColor(33, 150, 243),
-            "VectorType": QColor(156, 39, 176),
-            "ColorType": QColor(255, 193, 7),
-            "BooleanType": QColor(244, 67, 54),
-            "StringType": QColor(96, 125, 139),
-        }
-        
-        return color_map.get(socket_type, QColor(158, 158, 158))
-    
-    def add_connection(self, connection: 'ConnectionGraphics'):
-        if connection not in self.connections:
-            self.connections.append(connection)
-            self._update_appearance()
-    
-    def remove_connection(self, connection: 'ConnectionGraphics'):
-        if connection in self.connections:
-            self.connections.remove(connection)
-            self._update_appearance()
-    
-    def hoverEnterEvent(self, event):
-        self.setScale(1.3)
-        pen = QPen(QColor(255, 255, 0), 4)
-        self.setPen(pen)
-        super().hoverEnterEvent(event)
-    
-    def hoverLeaveEvent(self, event):
-        self.setScale(1.0)
-        pen = QPen(QColor(255, 255, 255), 3)
-        self.setPen(pen)
-        super().hoverLeaveEvent(event)
-    
-    def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            print(f"Socket clickeado: {self.socket.node.title}.{self.socket.name}")
-            editor = self.parent_node.editor
-            editor.start_connection(self)
-            event.accept()
-        else:
-            event.ignore()
-
-class ConnectionGraphics(QGraphicsItem):
-    """Representación visual de una conexión"""
-    
-    def __init__(self, output_socket: SocketGraphics, input_socket: SocketGraphics, connection: Connection):
-        super().__init__()
-        
-        self.output_socket = output_socket
-        self.input_socket = input_socket
-        self.connection = connection
-        
-        self.setZValue(-1)
-        self.setAcceptHoverEvents(True)
-        
-        self._selected = False
-        self._hovered = False
-        
-        output_socket.add_connection(self)
-        input_socket.add_connection(self)
-    
-    def boundingRect(self) -> QRectF:
-        start = self.output_socket.scenePos()
-        end = self.input_socket.scenePos()
-        
-        margin = 100  # CONNECTION_VISUAL["curve_strength"]
-        
-        return QRectF(
-            min(start.x(), end.x()) - margin,
-            min(start.y(), end.y()) - margin,
-            abs(end.x() - start.x()) + 2 * margin,
-            abs(end.y() - start.y()) + 2 * margin
-        )
-    
-    def paint(self, painter: QPainter, option, widget):
-        start = self.mapFromScene(self.output_socket.scenePos())
-        end = self.mapFromScene(self.input_socket.scenePos())
-        
-        if self._selected:
-            pen = QPen(QColor(255, 255, 255), 3)
-        elif self._hovered:
-            pen = QPen(QColor(255, 255, 255), 3)
-        else:
-            color = self.output_socket._get_socket_color()
-            pen = QPen(color, 2)
-        
-        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-        painter.setPen(pen)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        
-        path = self._create_bezier_path(start, end)
-        painter.drawPath(path)
-    
-    def _create_bezier_path(self, start: QPointF, end: QPointF) -> QPainterPath:
-        path = QPainterPath()
-        path.moveTo(start)
-        
-        curve_strength = 100
-        control1 = QPointF(start.x() + curve_strength, start.y())
-        control2 = QPointF(end.x() - curve_strength, end.y())
-        
-        path.cubicTo(control1, control2, end)
-        return path
-    
-    def hoverEnterEvent(self, event):
-        self._hovered = True
-        self.update()
-        super().hoverEnterEvent(event)
-    
-    def hoverLeaveEvent(self, event):
-        self._hovered = False
-        self.update()
-        super().hoverLeaveEvent(event)
-
-class NodeGraphics(QGraphicsRectItem):
-    """Representación visual de un nodo"""
-    
-    def __init__(self, node: Node, editor: 'NodeEditorWidget'):
-        super().__init__()
-        
-        self.node = node
-        self.editor = editor
-        self.state = NodeState.NORMAL
-        
-        self.input_sockets: Dict[str, SocketGraphics] = {}
-        self.output_sockets: Dict[str, SocketGraphics] = {}
-        
-        self._init_appearance()
-        self._create_sockets()
-        self._create_title()
-        
-        # Interactividad
-        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, True)
-        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
-        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges, True)
-        self.setAcceptHoverEvents(True)
-        self.setZValue(1)
-        
-        self.setPos(node.pos_x, node.pos_y)
-    
-    def _init_appearance(self):
-        width = 180  # NODE_VISUAL["width"]
-        height = 100  # NODE_VISUAL["height"]
-        
-        self.setRect(0, 0, width, height)
-        self._update_appearance()
-    
-    def _update_appearance(self):
-        category = getattr(self.node, 'NODE_CATEGORY', 'base')
-        
-        color_map = {
-            'generators': '#4CAF50',
-            'parameters': '#FFC107',
-            'outputs': '#F44336',
-            'modifiers': '#2196F3',
-            'operations': '#FF9800',
-            'materials': '#9C27B0',
-            'base': '#757575'
-        }
-        
-        base_color = QColor(color_map.get(category, '#757575'))
-        
-        if self.state == NodeState.SELECTED:
-            base_color = base_color.lighter(150)
-            pen_width = 3
-        elif self.state == NodeState.HOVERED:
-            base_color = base_color.lighter(120)
-            pen_width = 2
-        else:
-            pen_width = 2
-        
-        gradient = QLinearGradient(0, 0, 0, 100)
-        gradient.setColorAt(0, base_color.lighter(130))
-        gradient.setColorAt(1, base_color.darker(130))
-        
-        self.setBrush(QBrush(gradient))
-        self.setPen(QPen(QColor(255, 255, 255, 180), pen_width))
-    
-    def _create_sockets(self):
-        input_count = len(self.node.input_sockets)
-        for i, (name, socket) in enumerate(self.node.input_sockets.items()):
-            socket_graphics = SocketGraphics(socket, self)
-            y = self._calculate_socket_y(i, input_count)
-            socket_graphics.setPos(0, y)
-            self.input_sockets[name] = socket_graphics
-        
-        output_count = len(self.node.output_sockets)
-        for i, (name, socket) in enumerate(self.node.output_sockets.items()):
-            socket_graphics = SocketGraphics(socket, self)
-            y = self._calculate_socket_y(i, output_count)
-            socket_graphics.setPos(180, y)
-            self.output_sockets[name] = socket_graphics
-    
-    def _calculate_socket_y(self, index: int, total: int) -> float:
-        title_height = 30
-        available_height = 100 - title_height
-        
-        if total == 1:
-            return title_height + available_height / 2
-        else:
-            spacing = available_height / (total + 1)
-            return title_height + spacing * (index + 1)
-    
-    def _create_title(self):
-        self.title_item = QGraphicsTextItem(self.node.title, self)
-        self.title_item.setPos(8, 4)
-        
-        font = QFont("Arial", 10, QFont.Weight.Bold)
-        self.title_item.setFont(font)
-        self.title_item.setDefaultTextColor(QColor(255, 255, 255))
-    
-    def set_state(self, state: NodeState):
-        if self.state != state:
-            self.state = state
-            self._update_appearance()
-    
-    def itemChange(self, change, value):
-        if change == QGraphicsItem.GraphicsItemChange.ItemPositionChange:
-            self.node.pos_x = value.x()
-            self.node.pos_y = value.y()
-            
-        elif change == QGraphicsItem.GraphicsItemChange.ItemSelectedChange:
-            if value:
-                self.set_state(NodeState.SELECTED)
-                self.editor.node_selected.emit(self.node)
-            else:
-                self.set_state(NodeState.NORMAL)
-        
-        return super().itemChange(change, value)
-    
-    def hoverEnterEvent(self, event):
-        if not self.isSelected():
-            self.set_state(NodeState.HOVERED)
-        super().hoverEnterEvent(event)
-    
-    def hoverLeaveEvent(self, event):
-        if not self.isSelected():
-            self.set_state(NodeState.NORMAL)
-        super().hoverLeaveEvent(event)
-
-class NodeEditorWidget(QGraphicsView):
-    """Widget principal del editor de nodos"""
-    
-    node_selected = pyqtSignal(object)
-    node_added = pyqtSignal(object)
-    node_removed = pyqtSignal(object)
-    connection_created = pyqtSignal(object)
+    # Constantes de la grilla
+    GRID_SIZE = 20
+    GRID_SQUARES = 5
     
     def __init__(self, parent=None):
         super().__init__(parent)
         
-        self.scene = QGraphicsScene()
-        self.setScene(self.scene)
+        # Configurar escena
+        self.setSceneRect(-5000, -5000, 10000, 10000)
         
-        self.node_graphics: Dict[str, NodeGraphics] = {}
-        self.connection_graphics: List[ConnectionGraphics] = []
+        # Estado del editor
+        self.node_graph = NodeGraph()
+        self.node_graphics = {}  # node_id -> NodeGraphicsItem
         
-        # Estado de conexión
-        self.connecting_socket = None
-        self.temp_connection_line = None
-        self.is_connecting = False
+        # Sistema de conexiones completo
+        self.connection_manager = ConnectionManager(self)
         
-        self._setup_view()
+        # Configuración visual
+        self.grid_enabled = True
+        self.snap_to_grid = False
         
-        print("✅ NodeEditorWidget completo inicializado")
+        # Configurar colores
+        self.setBackgroundBrush(QBrush(QColor(35, 35, 35)))
+        
+        # Timer para animaciones
+        self.animation_timer = QTimer()
+        self.animation_timer.timeout.connect(self.update_animations)
+        self.animation_timer.start(50)  # 20 FPS para animaciones suaves
+        
+        print("🎬 Escena de editor inicializada con sistema completo de conexiones")
     
-    def _setup_view(self):
-        self.setRenderHint(QPainter.RenderHint.Antialiasing)
-        self.setDragMode(QGraphicsView.DragMode.RubberBandDrag)
+    def drawBackground(self, painter: QPainter, rect: QRectF):
+        """Dibuja el fondo con grilla"""
+        super().drawBackground(painter, rect)
         
-        self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
-        self.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
+        if not self.grid_enabled:
+            return
         
-        bg_color = QColor("#1e1e1e")  # DARK_THEME['background_dark']
-        self.setBackgroundBrush(QBrush(bg_color))
-    
-    def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            items = self.scene.items(self.mapToScene(event.pos()))
+        # Configurar painter
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+        
+        # Colores de la grilla
+        grid_pen_fine = QPen(QColor(60, 60, 60), 1)
+        grid_pen_thick = QPen(QColor(80, 80, 80), 2)
+        
+        # Calcular líneas visibles
+        left = int(rect.left()) - (int(rect.left()) % self.GRID_SIZE)
+        top = int(rect.top()) - (int(rect.top()) % self.GRID_SIZE)
+        
+        # Líneas verticales
+        x = left
+        while x < rect.right():
+            if x % (self.GRID_SIZE * self.GRID_SQUARES) == 0:
+                painter.setPen(grid_pen_thick)
+            else:
+                painter.setPen(grid_pen_fine)
             
-            for item in items:
-                if isinstance(item, SocketGraphics):
-                    self.start_connection(item)
-                    event.accept()
-                    return
+            # Convertir a enteros para drawLine
+            painter.drawLine(int(x), int(rect.top()), int(x), int(rect.bottom()))
+            x += self.GRID_SIZE
         
-        super().mousePressEvent(event)
+        # Líneas horizontales
+        y = top
+        while y < rect.bottom():
+            if y % (self.GRID_SIZE * self.GRID_SQUARES) == 0:
+                painter.setPen(grid_pen_thick)
+            else:
+                painter.setPen(grid_pen_fine)
+            
+            # Convertir a enteros para drawLine
+            painter.drawLine(int(rect.left()), int(y), int(rect.right()), int(y))
+            y += self.GRID_SIZE
+    
+    def add_node(self, node: Node, position: QPointF = None) -> NodeGraphicsItem:
+        """Añade un nodo a la escena"""
+        # Añadir al modelo
+        self.node_graph.add_node(node)
+        
+        # Crear representación gráfica
+        node_graphics = create_node_graphics(node)
+        
+        # Aplicar tema
+        NodeTheme.apply_category_colors(node_graphics)
+        
+        # Posicionar nodo
+        if position:
+            if self.snap_to_grid:
+                position = self.snap_to_grid_point(position)
+            node_graphics.setPos(position)
+            node.pos_x = position.x()
+            node.pos_y = position.y()
+        
+        # Añadir a la escena
+        self.addItem(node_graphics)
+        self.node_graphics[node.id] = node_graphics
+        
+        # Conectar señales
+        self.node_added.emit(node)
+        
+        print(f"🎯 Nodo añadido: {node.title} con {len(node.input_sockets)} inputs y {len(node.output_sockets)} outputs")
+        return node_graphics
+    
+    def remove_node(self, node_id: str):
+        """Elimina un nodo de la escena"""
+        if node_id not in self.node_graphics:
+            return
+        
+        node_graphics = self.node_graphics[node_id]
+        node = node_graphics.node
+        
+        # Eliminar conexiones relacionadas
+        connections_to_remove = []
+        for connection_id, connection_graphics in self.connection_manager.connections.items():
+            if (connection_graphics.connection.output_socket.node.id == node_id or
+                connection_graphics.connection.input_socket.node.id == node_id):
+                connections_to_remove.append(connection_id)
+        
+        for connection_id in connections_to_remove:
+            self.connection_manager.remove_connection_graphics(connection_id)
+        
+        # Eliminar del modelo
+        self.node_graph.remove_node(node_id)
+        
+        # Eliminar gráficos
+        self.removeItem(node_graphics)
+        del self.node_graphics[node_id]
+        
+        # Emitir señal
+        self.node_removed.emit(node)
+    
+    def snap_to_grid_point(self, point: QPointF) -> QPointF:
+        """Ajusta un punto a la grilla"""
+        x = round(point.x() / self.GRID_SIZE) * self.GRID_SIZE
+        y = round(point.y() / self.GRID_SIZE) * self.GRID_SIZE
+        return QPointF(x, y)
     
     def mouseMoveEvent(self, event):
-        if self.is_connecting and self.temp_connection_line:
-            scene_pos = self.mapToScene(event.pos())
-            start_pos = self.connecting_socket.scenePos()
-            
-            self.temp_connection_line.setLine(
-                start_pos.x(), start_pos.y(),
-                scene_pos.x(), scene_pos.y()
-            )
-            event.accept()
-            return
+        """Maneja movimiento del mouse"""
+        # Actualizar conexión temporal si existe
+        if self.connection_manager.temp_connection:
+            self.connection_manager.update_temp_connection(event.scenePos())
         
         super().mouseMoveEvent(event)
     
     def mouseReleaseEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton and self.is_connecting:
-            items = self.scene.items(self.mapToScene(event.pos()))
+        """Maneja liberación del mouse"""
+        # Finalizar conexión si hay una temporal
+        if self.connection_manager.temp_connection:
+            # Buscar socket en la posición
+            item = self.itemAt(event.scenePos(), self.views()[0].transform())
             
-            target_socket = None
-            for item in items:
-                if isinstance(item, SocketGraphics) and item != self.connecting_socket:
-                    target_socket = item
-                    break
-            
-            if target_socket:
-                self.finish_connection(target_socket)
+            from .node_graphics import SocketGraphicsItem
+            if isinstance(item, SocketGraphicsItem):
+                self.connection_manager.finish_connection(item)
             else:
-                self.cancel_connection()
-            event.accept()
-            return
+                self.connection_manager.cancel_connection()
         
         super().mouseReleaseEvent(event)
     
-    def add_node(self, node: Node, pos: QPointF = None) -> NodeGraphics:
-        if pos:
-            node.pos_x = pos.x()
-            node.pos_y = pos.y()
-        
-        node_graphics = NodeGraphics(node, self)
-        self.scene.addItem(node_graphics)
-        
-        self.node_graphics[node.id] = node_graphics
-        self.node_added.emit(node)
-        
-        return node_graphics
+    def start_connection(self, socket_graphics):
+        """Inicia la creación de una conexión"""
+        self.connection_manager.start_connection(socket_graphics)
     
-    def create_connection(self, output_socket: SocketGraphics, input_socket: SocketGraphics):
-        try:
-            if not output_socket.socket.can_connect_to(input_socket.socket):
-                print(f"No se puede conectar: tipos incompatibles")
-                return None
-            
-            connection = Connection(output_socket.socket, input_socket.socket)
-            connection_graphics = ConnectionGraphics(output_socket, input_socket, connection)
-            self.scene.addItem(connection_graphics)
-            self.connection_graphics.append(connection_graphics)
-            
-            self.connection_created.emit(connection)
-            print(f"✅ Conexión creada: {output_socket.socket.node.title} → {input_socket.socket.node.title}")
-            
-            return connection_graphics
-            
-        except Exception as e:
-            print(f"❌ Error creando conexión: {e}")
-            return None
+    def keyPressEvent(self, event: QKeyEvent):
+        """Maneja teclas presionadas"""
+        if event.key() == Qt.Key.Key_Delete:
+            # Eliminar items seleccionados
+            self.delete_selected_items()
+        elif event.key() == Qt.Key.Key_Escape:
+            # Cancelar conexión temporal
+            self.connection_manager.cancel_connection()
+        
+        super().keyPressEvent(event)
     
-    def start_connection(self, socket: SocketGraphics):
-        self.connecting_socket = socket
-        self.is_connecting = True
+    def delete_selected_items(self):
+        """Elimina los items seleccionados"""
+        selected_items = self.selectedItems()
         
-        start_pos = socket.scenePos()
-        self.temp_connection_line = QGraphicsLineItem(
-            start_pos.x(), start_pos.y(), 
-            start_pos.x(), start_pos.y()
-        )
-        
-        pen = QPen(QColor(255, 255, 255, 128), 2)
-        pen.setStyle(Qt.PenStyle.DashLine)
-        self.temp_connection_line.setPen(pen)
-        
-        self.scene.addItem(self.temp_connection_line)
-        self.setCursor(QCursor(Qt.CursorShape.CrossCursor))
-        self.setDragMode(QGraphicsView.DragMode.NoDrag)
-        
-        print(f"🔗 Iniciando conexión desde: {socket.socket.node.title}")
+        for item in selected_items:
+            if isinstance(item, NodeGraphicsItem):
+                self.remove_node(item.node.id)
+            elif isinstance(item, ConnectionGraphicsItem):
+                if item.connection:
+                    # Eliminar conexión del modelo
+                    item.connection.disconnect()
+                    # Eliminar gráficos
+                    self.connection_manager.remove_connection_graphics(item.connection.id)
+                    # Emitir señal
+                    self.connection_removed.emit(item.connection)
     
-    def finish_connection(self, target_socket: SocketGraphics):
-        if self.connecting_socket and target_socket:
-            if (self.connecting_socket.socket.direction == SocketDirection.OUTPUT and 
-                target_socket.socket.direction == SocketDirection.INPUT):
-                self.create_connection(self.connecting_socket, target_socket)
-            elif (self.connecting_socket.socket.direction == SocketDirection.INPUT and 
-                  target_socket.socket.direction == SocketDirection.OUTPUT):
-                self.create_connection(target_socket, self.connecting_socket)
-            else:
-                print("❌ Direcciones incompatibles")
-        
-        self.cancel_connection()
+    def update_connections_for_node(self, node_id: str):
+        """Actualiza conexiones para un nodo específico"""
+        self.connection_manager.update_connections_for_node(node_id)
     
-    def cancel_connection(self):
-        if self.temp_connection_line:
-            self.scene.removeItem(self.temp_connection_line)
-            self.temp_connection_line = None
-        
-        self.connecting_socket = None
-        self.is_connecting = False
-        
-        self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
-        self.setDragMode(QGraphicsView.DragMode.RubberBandDrag)
-    
-    def wheelEvent(self, event):
-        zoom_factor = 1.25
-        
-        if event.angleDelta().y() > 0:
-            self.scale(zoom_factor, zoom_factor)
-        else:
-            self.scale(1/zoom_factor, 1/zoom_factor)
+    def update_animations(self):
+        """Actualiza animaciones activas"""
+        # Actualizar animaciones de conexiones activas
+        for connection_graphics in self.connection_manager.connections.values():
+            if connection_graphics.is_active:
+                connection_graphics.update()
     
     def clear_all(self):
-        self.cancel_connection()
-        self.scene.clear()
+        """Limpia toda la escena"""
+        self.clear()
+        self.node_graph.clear()
         self.node_graphics.clear()
-        self.connection_graphics.clear()
-
-def create_node_editor(parent=None) -> NodeEditorWidget:
-    if not PYQT_AVAILABLE:
+        self.connection_manager.connections.clear()
+        print("🗑️ Escena limpiada completamente")
+    
+    def get_node_at_position(self, pos: QPointF) -> Optional[Node]:
+        """Obtiene el nodo en una posición"""
+        item = self.itemAt(pos, self.views()[0].transform())
+        if isinstance(item, NodeGraphicsItem):
+            return item.node
         return None
-        
-    editor = NodeEditorWidget(parent)
     
-    # Crear nodos de ejemplo
-    try:
-        from nodes.primitives.circle_node import CircleNode
-        from nodes.base.base_node import NumberParameterNode, ViewerNode
-        
-        number_node = NumberParameterNode("Radio")
-        circle_node = CircleNode("Círculo")
-        viewer_node = ViewerNode("Vista Previa")
-        
-        editor.add_node(number_node, QPointF(50, 100))
-        editor.add_node(circle_node, QPointF(300, 100))
-        editor.add_node(viewer_node, QPointF(550, 100))
-        
-        print("✅ Nodos de ejemplo creados")
-        
-    except Exception as e:
-        print(f"⚠️ Error creando nodos de ejemplo: {e}")
+    def execute_graph(self):
+        """Ejecuta el grafo de nodos con efectos visuales"""
+        try:
+            # Obtener orden de ejecución
+            execution_order = self.node_graph.get_execution_order()
+            
+            # Resetear estados visuales
+            for node_graphics in self.node_graphics.values():
+                # Cambiar color temporalmente para mostrar ejecución
+                pass
+            
+            # Ejecutar nodos con visualización
+            for node in execution_order:
+                node.mark_dirty()
+                if hasattr(node, 'compute'):
+                    result = node.compute()
+                    
+                    # Activar conexiones de salida
+                    for output_socket in node.output_sockets.values():
+                        for connection in output_socket.connections:
+                            connection_graphics = self.connection_manager.connections.get(connection.id)
+                            if connection_graphics:
+                                connection_graphics.set_active(True)
+                                
+                                # Programar desactivación
+                                QTimer.singleShot(1000, lambda cg=connection_graphics: cg.set_active(False))
+            
+            print(f"✅ Grafo ejecutado: {len(execution_order)} nodos")
+            
+        except Exception as e:
+            print(f"❌ Error ejecutando grafo: {e}")
+
+class NodeEditorView(QGraphicsView):
+    """
+    Vista especializada para el editor de nodos
+    """
     
-    return editor
+    def __init__(self, scene: NodeEditorScene, parent=None):
+        super().__init__(scene, parent)
+        
+        # Configurar vista
+        self.setRenderHint(QPainter.RenderHint.Antialiasing)
+        self.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        self.setViewportUpdateMode(QGraphicsView.ViewportUpdateMode.FullViewportUpdate)
+        
+        # Configurar interacción
+        self.setDragMode(QGraphicsView.DragMode.RubberBandDrag)
+        self.setInteractive(True)
+        
+        # Configurar zoom
+        self.zoom_factor = 1.0
+        self.zoom_step = 1.15
+        self.zoom_range = (0.1, 3.0)
+        
+        # Estado del editor
+        self.middle_mouse_pressed = False
+        self.last_pan_point = QPointF()
+    
+    def wheelEvent(self, event: QWheelEvent):
+        """Maneja zoom con rueda del mouse"""
+        # Zoom con Ctrl + rueda
+        if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            zoom_in = event.angleDelta().y() > 0
+            zoom_factor = self.zoom_step if zoom_in else 1.0 / self.zoom_step
+            
+            # Aplicar zoom
+            self.scale_view(zoom_factor)
+            event.accept()
+        else:
+            # Scroll normal
+            super().wheelEvent(event)
+    
+    def mousePressEvent(self, event: QMouseEvent):
+        """Maneja clicks del mouse"""
+        if event.button() == Qt.MouseButton.MiddleButton:
+            # Pan con botón medio
+            self.middle_mouse_pressed = True
+            self.last_pan_point = event.pos()
+            self.setCursor(Qt.CursorShape.ClosedHandCursor)
+            event.accept()
+        else:
+            super().mousePressEvent(event)
+    
+    def mouseMoveEvent(self, event: QMouseEvent):
+        """Maneja movimiento del mouse"""
+        if self.middle_mouse_pressed:
+            # Pan de la vista
+            delta = event.pos() - self.last_pan_point
+            self.last_pan_point = event.pos()
+            
+            # Mover vista
+            h_bar = self.horizontalScrollBar()
+            v_bar = self.verticalScrollBar()
+            h_bar.setValue(h_bar.value() - delta.x())
+            v_bar.setValue(v_bar.value() - delta.y())
+            
+            event.accept()
+        else:
+            super().mouseMoveEvent(event)
+    
+    def mouseReleaseEvent(self, event: QMouseEvent):
+        """Maneja liberación del mouse"""
+        if event.button() == Qt.MouseButton.MiddleButton:
+            self.middle_mouse_pressed = False
+            self.setCursor(Qt.CursorShape.ArrowCursor)
+            event.accept()
+        else:
+            super().mouseReleaseEvent(event)
+    
+    def scale_view(self, factor: float):
+        """Escala la vista con límites"""
+        new_zoom = self.zoom_factor * factor
+        
+        if self.zoom_range[0] <= new_zoom <= self.zoom_range[1]:
+            self.scale(factor, factor)
+            self.zoom_factor = new_zoom
+    
+    def fit_in_view_all(self):
+        """Ajusta la vista para mostrar todos los items"""
+        if self.scene().items():
+            self.fitInView(self.scene().itemsBoundingRect(), Qt.AspectRatioMode.KeepAspectRatio)
+            self.zoom_factor = self.transform().m11()
+    
+    def reset_zoom(self):
+        """Resetea el zoom a 100%"""
+        self.resetTransform()
+        self.zoom_factor = 1.0
+
+class NodeEditorWidget(QWidget):
+    """
+    Widget principal del editor de nodos
+    Combina la vista, herramientas y funcionalidad
+    """
+    
+    # Señales
+    node_selected = pyqtSignal(object)
+    node_added = pyqtSignal(object)
+    node_removed = pyqtSignal(object)
+    connection_created = pyqtSignal(object)
+    connection_removed = pyqtSignal(object)
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        
+        # Crear componentes
+        self.scene = NodeEditorScene(self)
+        self.view = NodeEditorView(self.scene, self)
+        
+        # Configurar layout
+        self.init_ui()
+        
+        # Conectar señales
+        self.connect_signals()
+        
+        print("🔗 Editor de nodos inicializado")
+    
+    def init_ui(self):
+        """Inicializa la interfaz de usuario"""
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        
+        # Toolbar superior
+        toolbar = self.create_toolbar()
+        layout.addWidget(toolbar)
+        
+        # Área principal con splitter
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        layout.addWidget(splitter)
+        
+        # Vista del editor (área principal)
+        self.view.setMinimumSize(400, 300)
+        splitter.addWidget(self.view)
+        
+        # Panel lateral derecho (mini propiedades)
+        side_panel = self.create_side_panel()
+        side_panel.setMaximumWidth(200)
+        splitter.addWidget(side_panel)
+        
+        # Configurar tamaños del splitter
+        splitter.setSizes([600, 200])
+        
+        # Barra de estado
+        self.status_bar = self.create_status_bar()
+        layout.addWidget(self.status_bar)
+    
+    def create_toolbar(self) -> QToolBar:
+        """Crea la barra de herramientas"""
+        toolbar = QToolBar()
+        toolbar.setStyleSheet("""
+            QToolBar {
+                background: #404040;
+                border: none;
+                spacing: 5px;
+                padding: 5px;
+            }
+            QPushButton {
+                background: #505050;
+                border: 1px solid #606060;
+                border-radius: 3px;
+                padding: 5px 10px;
+                color: white;
+                font-size: 12px;
+            }
+            QPushButton:hover {
+                background: #606060;
+            }
+            QPushButton:pressed {
+                background: #0078d4;
+            }
+            QLabel {
+                color: white;
+                font-weight: bold;
+            }
+        """)
+        
+        # Botones de control
+        execute_btn = QPushButton("▶️ Ejecutar")
+        execute_btn.clicked.connect(self.execute_graph)
+        toolbar.addWidget(execute_btn)
+        
+        toolbar.addSeparator()
+        
+        clear_btn = QPushButton("🗑️ Limpiar")
+        clear_btn.clicked.connect(self.clear_scene)
+        toolbar.addWidget(clear_btn)
+        
+        toolbar.addSeparator()
+        
+        # Controles de vista
+        fit_btn = QPushButton("🔍 Ajustar Vista")
+        fit_btn.clicked.connect(self.view.fit_in_view_all)
+        toolbar.addWidget(fit_btn)
+        
+        zoom_reset_btn = QPushButton("100%")
+        zoom_reset_btn.clicked.connect(self.view.reset_zoom)
+        toolbar.addWidget(zoom_reset_btn)
+        
+        toolbar.addSeparator()
+        
+        # Controles de grilla
+        grid_btn = QPushButton("📐 Grilla")
+        grid_btn.setCheckable(True)
+        grid_btn.setChecked(True)
+        grid_btn.clicked.connect(self.toggle_grid)
+        toolbar.addWidget(grid_btn)
+        
+        snap_btn = QPushButton("🧲 Snap")
+        snap_btn.setCheckable(True)
+        snap_btn.clicked.connect(self.toggle_snap)
+        toolbar.addWidget(snap_btn)
+        
+        toolbar.addSeparator()
+        
+        # Información de zoom
+        self.zoom_label = QLabel("Zoom: 100%")
+        toolbar.addWidget(self.zoom_label)
+        
+        return toolbar
+    
+    def create_side_panel(self) -> QWidget:
+        """Crea el panel lateral con información rápida"""
+        panel = QFrame()
+        panel.setFrameStyle(QFrame.Shape.StyledPanel)
+        panel.setStyleSheet("""
+            QFrame {
+                background: #353535;
+                border: 1px solid #555;
+            }
+            QLabel {
+                color: white;
+                padding: 5px;
+            }
+        """)
+        
+        layout = QVBoxLayout(panel)
+        
+        # Título
+        title = QLabel("📊 Editor Info")
+        title.setStyleSheet("font-weight: bold; font-size: 14px; background: #404040; padding: 8px;")
+        layout.addWidget(title)
+        
+        # Contadores
+        self.node_count_label = QLabel("Nodos: 0")
+        layout.addWidget(self.node_count_label)
+        
+        self.connection_count_label = QLabel("Conexiones: 0")
+        layout.addWidget(self.connection_count_label)
+        
+        # Separador visual
+        separator = QFrame()
+        separator.setFrameShape(QFrame.Shape.HLine)
+        separator.setFrameShadow(QFrame.Shadow.Sunken)
+        separator.setStyleSheet("color: #555;")
+        layout.addWidget(separator)
+        
+        # Nodo seleccionado
+        selected_title = QLabel("🎯 Seleccionado:")
+        selected_title.setStyleSheet("font-weight: bold;")
+        layout.addWidget(selected_title)
+        
+        self.selected_node_label = QLabel("Ninguno")
+        self.selected_node_label.setWordWrap(True)
+        layout.addWidget(self.selected_node_label)
+        
+        layout.addStretch()
+        
+        # Botones rápidos
+        quick_title = QLabel("⚡ Acciones Rápidas:")
+        quick_title.setStyleSheet("font-weight: bold;")
+        layout.addWidget(quick_title)
+        
+        add_circle_btn = QPushButton("➕ Círculo")
+        add_circle_btn.clicked.connect(self.add_circle_node)
+        layout.addWidget(add_circle_btn)
+        
+        add_number_btn = QPushButton("➕ Número")
+        add_number_btn.clicked.connect(self.add_number_node)
+        layout.addWidget(add_number_btn)
+        
+        add_viewer_btn = QPushButton("➕ Visor")
+        add_viewer_btn.clicked.connect(self.add_viewer_node)
+        layout.addWidget(add_viewer_btn)
+        
+        return panel
+    
+    def create_status_bar(self) -> QFrame:
+        """Crea la barra de estado"""
+        status_bar = QFrame()
+        status_bar.setFixedHeight(25)
+        status_bar.setStyleSheet("""
+            QFrame {
+                background: #404040;
+                border-top: 1px solid #555;
+            }
+            QLabel {
+                color: white;
+                padding: 0 10px;
+                font-size: 11px;
+            }
+        """)
+        
+        layout = QHBoxLayout(status_bar)
+        layout.setContentsMargins(5, 0, 5, 0)
+        
+        self.status_label = QLabel("Listo")
+        layout.addWidget(self.status_label)
+        
+        layout.addStretch()
+        
+        self.coordinates_label = QLabel("X: 0, Y: 0")
+        layout.addWidget(self.coordinates_label)
+        
+        return status_bar
+    
+    def connect_signals(self):
+        """Conecta las señales internas"""
+        # Señales de la escena
+        self.scene.node_selected.connect(self.on_node_selected)
+        self.scene.node_added.connect(self.on_node_added)
+        self.scene.node_removed.connect(self.on_node_removed)
+        self.scene.connection_created.connect(self.on_connection_created)
+        self.scene.connection_removed.connect(self.on_connection_removed)
+        
+        # Reenviar señales al exterior
+        self.scene.node_selected.connect(self.node_selected.emit)
+        self.scene.node_added.connect(self.node_added.emit)
+        self.scene.node_removed.connect(self.node_removed.emit)
+        self.scene.connection_created.connect(self.connection_created.emit)
+        self.scene.connection_removed.connect(self.connection_removed.emit)
+        
+        # Actualización de zoom
+        self.view.scene().changed.connect(self.update_zoom_label)
+    
+    def execute_graph(self):
+        """Ejecuta el grafo con efectos visuales"""
+        self.scene.execute_graph()
+        self.status_label.setText("Grafo ejecutado")
+    
+    def clear_scene(self):
+        """Limpia la escena"""
+        self.scene.clear_all()
+        self.update_info_labels()
+        self.status_label.setText("Escena limpiada")
+    
+    def toggle_grid(self, enabled: bool):
+        """Activa/desactiva la grilla"""
+        self.scene.grid_enabled = enabled
+        self.scene.update()
+        self.status_label.setText(f"Grilla {'activada' if enabled else 'desactivada'}")
+    
+    def toggle_snap(self, enabled: bool):
+        """Activa/desactiva snap to grid"""
+        self.scene.snap_to_grid = enabled
+        self.status_label.setText(f"Snap {'activado' if enabled else 'desactivado'}")
+    
+    def add_circle_node(self):
+        """Añade un nodo círculo"""
+        try:
+            from nodes.primitives.circle_node import CircleNode
+            node = CircleNode("Círculo")
+            
+            # Posicionar en el centro de la vista
+            center = self.view.mapToScene(self.view.rect().center())
+            self.scene.add_node(node, center)
+            
+            self.status_label.setText("Nodo círculo añadido")
+        except Exception as e:
+            self.status_label.setText(f"Error: {e}")
+    
+    def add_number_node(self):
+        """Añade un nodo número"""
+        try:
+            from nodes.base.base_node import NumberParameterNode
+            node = NumberParameterNode("Número")
+            
+            center = self.view.mapToScene(self.view.rect().center())
+            self.scene.add_node(node, center)
+            
+            self.status_label.setText("Nodo número añadido")
+        except Exception as e:
+            self.status_label.setText(f"Error: {e}")
+    
+    def add_viewer_node(self):
+        """Añade un nodo visor"""
+        try:
+            from nodes.base.base_node import ViewerNode
+            node = ViewerNode("Visor")
+            
+            center = self.view.mapToScene(self.view.rect().center())
+            self.scene.add_node(node, center)
+            
+            self.status_label.setText("Nodo visor añadido")
+        except Exception as e:
+            self.status_label.setText(f"Error: {e}")
+    
+    def on_node_selected(self, node):
+        """Maneja selección de nodo"""
+        if node:
+            self.selected_node_label.setText(f"{node.title}\nTipo: {node.NODE_TYPE}")
+        else:
+            self.selected_node_label.setText("Ninguno")
+    
+    def on_node_added(self, node):
+        """Maneja nodo añadido"""
+        self.update_info_labels()
+    
+    def on_node_removed(self, node):
+        """Maneja nodo eliminado"""
+        self.update_info_labels()
+    
+    def on_connection_created(self, connection):
+        """Maneja conexión creada"""
+        self.update_info_labels()
+    
+    def on_connection_removed(self, connection):
+        """Maneja conexión eliminada"""
+        self.update_info_labels()
+    
+    def update_info_labels(self):
+        """Actualiza las etiquetas de información"""
+        node_count = len(self.scene.node_graphics)
+        connection_count = len(self.scene.connection_manager.connections)
+        
+        self.node_count_label.setText(f"Nodos: {node_count}")
+        self.connection_count_label.setText(f"Conexiones: {connection_count}")
+    
+    def update_zoom_label(self):
+        """Actualiza la etiqueta de zoom"""
+        zoom_percent = int(self.view.zoom_factor * 100)
+        self.zoom_label.setText(f"Zoom: {zoom_percent}%")
+    
+    def get_scene_data(self) -> dict:
+        """Obtiene los datos de la escena para serialización"""
+        return {
+            'nodes': [node.to_dict() for node in self.scene.node_graph.nodes.values()],
+            'connections': [
+                {
+                    'id': conn.id,
+                    'output_node': conn.output_socket.node.id,
+                    'output_socket': conn.output_socket.name,
+                    'input_node': conn.input_socket.node.id,
+                    'input_socket': conn.input_socket.name
+                }
+                for conn in self.scene.connection_manager.connections.values()
+                if conn.connection
+            ]
+        }
+    
+    def load_scene_data(self, data: dict):
+        """Carga datos de escena desde serialización"""
+        # Limpiar escena actual
+        self.clear_scene()
+        
+        # TODO: Implementar carga completa de nodos y conexiones
+        # Por ahora, solo mostrar que los datos fueron recibidos
+        node_count = len(data.get('nodes', []))
+        connection_count = len(data.get('connections', []))
+        
+        self.status_label.setText(f"Cargando: {node_count} nodos, {connection_count} conexiones")
+        print(f"📁 Datos de escena recibidos: {node_count} nodos, {connection_count} conexiones")
+
+# Función de conveniencia para crear el editor
+def create_node_editor(parent=None) -> NodeEditorWidget:
+    """Crea una instancia del editor de nodos"""
+    return NodeEditorWidget(parent)
+
+# Constantes de disponibilidad
+NODE_EDITOR_AVAILABLE = True
+
+# Funciones de utilidad para testing
+def test_node_editor():
+    """Prueba básica del editor de nodos"""
+    from PyQt6.QtWidgets import QApplication
+    import sys
+    
+    app = QApplication(sys.argv)
+    
+    editor = create_node_editor()
+    editor.show()
+    
+    # Añadir algunos nodos de prueba
+    editor.add_circle_node()
+    editor.add_number_node()
+    editor.add_viewer_node()
+    
+    print("🧪 Editor de nodos en modo de prueba")
+    print("💡 Consejos:")
+    print("  - Arrastra los nodos para moverlos")
+    print("  - Haz clic en los círculos (sockets) para crear conexiones")
+    print("  - Usa Ctrl+Rueda para hacer zoom")
+    print("  - Botón medio del mouse para hacer pan")
+    print("  - Delete para eliminar elementos seleccionados")
+    print("  - Escape para cancelar conexiones temporales")
+    
+    sys.exit(app.exec())
+
+if __name__ == "__main__":
+    test_node_editor()

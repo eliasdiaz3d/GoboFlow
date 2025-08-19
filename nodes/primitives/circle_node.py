@@ -1,334 +1,476 @@
 """
-Nodo generador de círculos para GoboFlow
-Genera geometría circular con parámetros configurables
+Nodo de círculo para GoboFlow
+Genera geometrías circulares procedurales
 """
 
 import math
-from typing import Dict, List, Tuple, Any, Optional
+from typing import Dict, Any, Optional
 
-from nodes.base.base_node import GeneratorNode
-from core.socket_types import NumberType, VectorType, BooleanType, GeometryType
+from core.node_system import Node
+from core.socket_types import NUMBER, GEOMETRY, VECTOR2D, POSITIVE_NUMBER
+from utils.geometry.base_geometry import Circle
 
-class CircleGeometry:
+class CircleNode(Node):
     """
-    Representación de geometría circular para GoboFlow
-    Contiene tanto la representación vectorial como datos para rasterización
-    """
-    
-    def __init__(self, center: Tuple[float, float] = (0, 0), 
-                 radius: float = 100.0, 
-                 segments: int = 32,
-                 filled: bool = True):
-        self.center = center
-        self.radius = radius
-        self.segments = max(3, segments)  # Mínimo 3 segmentos
-        self.filled = filled
-        
-        # Generar puntos del círculo
-        self.points = self._generate_circle_points()
-        
-        # Metadatos de geometría
-        self.geometry_type = "circle"
-        self.bbox = self._calculate_bbox()
-        
-    def _generate_circle_points(self) -> List[Tuple[float, float]]:
-        """Genera los puntos del perímetro del círculo"""
-        points = []
-        cx, cy = self.center
-        
-        for i in range(self.segments):
-            angle = (2 * math.pi * i) / self.segments
-            x = cx + self.radius * math.cos(angle)
-            y = cy + self.radius * math.sin(angle)
-            points.append((x, y))
-            
-        return points
-    
-    def _calculate_bbox(self) -> Tuple[float, float, float, float]:
-        """Calcula el bounding box (min_x, min_y, max_x, max_y)"""
-        cx, cy = self.center
-        return (
-            cx - self.radius,  # min_x
-            cy - self.radius,  # min_y
-            cx + self.radius,  # max_x
-            cy + self.radius   # max_y
-        )
-    
-    def get_svg_path(self) -> str:
-        """Genera un path SVG del círculo"""
-        cx, cy = self.center
-        
-        if self.filled:
-            # Círculo relleno usando comando circle de SVG
-            return f'<circle cx="{cx}" cy="{cy}" r="{self.radius}" fill="white" stroke="none"/>'
-        else:
-            # Círculo solo contorno
-            return f'<circle cx="{cx}" cy="{cy}" r="{self.radius}" fill="none" stroke="white" stroke-width="1"/>'
-    
-    def get_polygon_points(self) -> List[Tuple[float, float]]:
-        """Retorna los puntos como polígono aproximado"""
-        return self.points.copy()
-    
-    def contains_point(self, x: float, y: float) -> bool:
-        """Verifica si un punto está dentro del círculo"""
-        cx, cy = self.center
-        distance_sq = (x - cx) ** 2 + (y - cy) ** 2
-        return distance_sq <= self.radius ** 2
-    
-    def get_area(self) -> float:
-        """Calcula el área del círculo"""
-        return math.pi * self.radius ** 2
-    
-    def get_perimeter(self) -> float:
-        """Calcula el perímetro del círculo"""
-        return 2 * math.pi * self.radius
-    
-    def to_dict(self) -> Dict[str, Any]:
-        """Serializa la geometría a diccionario"""
-        return {
-            "type": "circle",
-            "center": self.center,
-            "radius": self.radius,
-            "segments": self.segments,
-            "filled": self.filled,
-            "points": self.points,
-            "bbox": self.bbox
-        }
-    
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'CircleGeometry':
-        """Deserializa geometría desde diccionario"""
-        return cls(
-            center=data.get("center", (0, 0)),
-            radius=data.get("radius", 100.0),
-            segments=data.get("segments", 32),
-            filled=data.get("filled", True)
-        )
-
-class CircleNode(GeneratorNode):
-    """
-    Nodo generador de círculos
-    Crea geometría circular con parámetros configurables
+    Nodo que genera geometrías de círculo
     """
     
     NODE_TYPE = "circle"
     NODE_TITLE = "Circle"
-    NODE_DESCRIPTION = "Generates a circular shape"
+    NODE_CATEGORY = "primitives"
+    NODE_DESCRIPTION = "Genera un círculo procedural"
     
     def __init__(self, title: Optional[str] = None):
         super().__init__(title)
         
-        # Parámetros por defecto
-        self.set_parameter("radius", 100.0)
-        self.set_parameter("center_x", 0.0)
-        self.set_parameter("center_y", 0.0)
-        self.set_parameter("segments", 32)
-        self.set_parameter("filled", True)
-        
+        # Parámetros internos
+        self._last_geometry = None
+        self._last_params = {}
+    
     def _init_sockets(self):
         """Inicializa los sockets del nodo círculo"""
-        # Inputs para parámetros del círculo
-        self.add_input("radius", NumberType(), default_value=100.0)
-        self.add_input("center", VectorType(), default_value=(0.0, 0.0, 0.0))
-        self.add_input("segments", NumberType(), default_value=32)
-        self.add_input("filled", BooleanType(), default_value=True)
+        # Inputs
+        self.add_input("center", VECTOR2D, [0.0, 0.0])
+        self.add_input("radius", POSITIVE_NUMBER, 100.0)
+        self.add_input("segments", NUMBER, 32)
         
-        # Output de geometría
-        self.add_output("geometry", GeometryType())
-        
-        # Outputs adicionales para información
-        self.add_output("area", NumberType())
-        self.add_output("perimeter", NumberType())
-        self.add_output("bbox", VectorType())  # Como vector 4D (min_x, min_y, max_x, max_y)
-    
-    def generate_geometry(self) -> CircleGeometry:
-        """Genera la geometría del círculo"""
-        # Obtener valores de inputs o parámetros internos
-        radius = self._get_radius()
-        center = self._get_center()
-        segments = self._get_segments()
-        filled = self._get_filled()
-        
-        # Crear geometría del círculo
-        circle = CircleGeometry(
-            center=center,
-            radius=radius,
-            segments=segments,
-            filled=filled
-        )
-        
-        return circle
-    
-    def _get_radius(self) -> float:
-        """Obtiene el radio desde input o parámetro"""
-        input_radius = self.get_input_value("radius")
-        if input_radius is not None:
-            try:
-                radius = float(input_radius)
-                return max(0.1, radius)  # Mínimo 0.1 para evitar círculos invisibles
-            except (ValueError, TypeError):
-                pass
-        return self.get_parameter("radius", 100.0)
-    
-    def _get_center(self) -> Tuple[float, float]:
-        """Obtiene el centro desde input o parámetros"""
-        input_center = self.get_input_value("center")
-        if input_center is not None:
-            try:
-                if isinstance(input_center, (list, tuple)) and len(input_center) >= 2:
-                    return (float(input_center[0]), float(input_center[1]))
-            except (ValueError, TypeError):
-                pass
-        
-        # Usar parámetros internos
-        x = self.get_parameter("center_x", 0.0)
-        y = self.get_parameter("center_y", 0.0)
-        return (x, y)
-    
-    def _get_segments(self) -> int:
-        """Obtiene el número de segmentos desde input o parámetro"""
-        input_segments = self.get_input_value("segments")
-        if input_segments is not None:
-            try:
-                segments = int(float(input_segments))
-                return max(3, min(256, segments))  # Entre 3 y 256 segmentos
-            except (ValueError, TypeError):
-                pass
-        return int(self.get_parameter("segments", 32))
-    
-    def _get_filled(self) -> bool:
-        """Obtiene si está relleno desde input o parámetro"""
-        input_filled = self.get_input_value("filled")
-        if input_filled is not None:
-            if isinstance(input_filled, bool):
-                return input_filled
-            try:
-                return bool(input_filled)
-            except (ValueError, TypeError):
-                pass
-        return self.get_parameter("filled", True)
+        # Outputs
+        self.add_output("geometry", GEOMETRY)
+        self.add_output("area", NUMBER)
+        self.add_output("perimeter", NUMBER)
+        self.add_output("center_out", VECTOR2D)
     
     def compute(self) -> Dict[str, Any]:
-        """Computa todos los outputs del nodo"""
-        # Generar geometría
-        circle = self.generate_geometry()
+        """Genera la geometría del círculo"""
+        # Obtener parámetros de entrada
+        center = self.get_input_value("center")
+        radius = self.get_input_value("radius")
+        segments = int(self.get_input_value("segments"))
         
-        # Calcular outputs adicionales
-        area = circle.get_area()
-        perimeter = circle.get_perimeter()
-        bbox = circle.bbox  # (min_x, min_y, max_x, max_y)
+        # Validar parámetros
+        radius = max(0.1, radius)  # Radio mínimo
+        segments = max(3, min(256, segments))  # Límites de segmentos
+        
+        # Convertir center a tupla si es lista
+        if isinstance(center, list):
+            center = (center[0], center[1])
+        
+        # Verificar si necesitamos regenerar la geometría
+        current_params = {
+            'center': center,
+            'radius': radius,
+            'segments': segments
+        }
+        
+        if (self._last_geometry is None or 
+            current_params != self._last_params):
+            
+            # Generar nueva geometría
+            self._last_geometry = Circle(center, radius, segments)
+            self._last_params = current_params
+        
+        # Calcular propiedades
+        area = self._last_geometry.area
+        perimeter = self._last_geometry.perimeter
         
         return {
-            "geometry": circle,
+            "geometry": self._last_geometry,
             "area": area,
             "perimeter": perimeter,
-            "bbox": bbox
+            "center_out": list(center)
         }
     
-    def get_preview_info(self) -> Dict[str, Any]:
-        """Información para preview en la UI"""
+    def generate_geometry(self) -> Optional[Circle]:
+        """
+        Método de conveniencia para generar la geometría directamente
+        Usado por el sistema de preview y exportación
+        """
         try:
-            circle = self.generate_geometry()
-            return {
-                "type": "circle",
-                "center": circle.center,
-                "radius": circle.radius,
-                "area": circle.get_area(),
-                "perimeter": circle.get_perimeter(),
-                "segments": circle.segments,
-                "filled": circle.filled
-            }
-        except Exception:
-            return {"type": "circle", "error": True}
+            result = self.compute()
+            return result.get("geometry")
+        except Exception as e:
+            print(f"Error generando geometría en {self.title}: {e}")
+            return None
+    
+    def get_preview_info(self) -> Dict[str, Any]:
+        """Obtiene información para preview del nodo"""
+        try:
+            result = self.compute()
+            geometry = result.get("geometry")
+            
+            if geometry:
+                return {
+                    "type": "circle",
+                    "center": geometry.circle_center,
+                    "radius": geometry.radius,
+                    "segments": geometry.segments,
+                    "area": geometry.area,
+                    "perimeter": geometry.perimeter,
+                    "bbox": geometry.bbox
+                }
+            else:
+                return {"type": "none"}
+                
+        except Exception as e:
+            return {"type": "error", "error": str(e)}
     
     def set_radius(self, radius: float):
-        """Método de conveniencia para establecer el radio"""
-        self.set_parameter("radius", max(0.1, float(radius)))
+        """Establece el radio del círculo"""
+        if "radius" in self.input_sockets:
+            # Si hay conexión, no cambiar el valor por defecto
+            if not self.input_sockets["radius"].connections:
+                self.input_sockets["radius"].default_value = max(0.1, radius)
+                self.mark_dirty()
     
-    def set_center(self, x: float, y: float):
-        """Método de conveniencia para establecer el centro"""
-        self.set_parameter("center_x", float(x))
-        self.set_parameter("center_y", float(y))
+    def set_center(self, center: tuple):
+        """Establece el centro del círculo"""
+        if "center" in self.input_sockets:
+            if not self.input_sockets["center"].connections:
+                self.input_sockets["center"].default_value = list(center)
+                self.mark_dirty()
     
     def set_segments(self, segments: int):
-        """Método de conveniencia para establecer segmentos"""
-        self.set_parameter("segments", max(3, min(256, int(segments))))
+        """Establece el número de segmentos"""
+        if "segments" in self.input_sockets:
+            if not self.input_sockets["segments"].connections:
+                segments = max(3, min(256, segments))
+                self.input_sockets["segments"].default_value = segments
+                self.mark_dirty()
     
-    def set_filled(self, filled: bool):
-        """Método de conveniencia para establecer si está relleno"""
-        self.set_parameter("filled", bool(filled))
+    def get_svg_export(self, style_override: Optional[Dict[str, str]] = None) -> str:
+        """
+        Exporta el círculo como elemento SVG
+        
+        Args:
+            style_override: Diccionario con estilos CSS para override
+        """
+        geometry = self.generate_geometry()
+        
+        if not geometry:
+            return ""
+        
+        # Estilo por defecto
+        style = {
+            "fill": "white",
+            "opacity": "0.8",
+            "stroke": "none"
+        }
+        
+        # Aplicar overrides
+        if style_override:
+            style.update(style_override)
+        
+        # Construir string de estilo
+        style_str = "; ".join([f"{k}: {v}" for k, v in style.items()])
+        
+        cx, cy = geometry.circle_center
+        r = geometry.radius
+        
+        return f'<circle cx="{cx}" cy="{cy}" r="{r}" style="{style_str}"/>'
+    
+    def animate_radius(self, start_radius: float, end_radius: float, 
+                      frame: int, total_frames: int) -> float:
+        """
+        Calcula el radio para un frame de animación
+        
+        Args:
+            start_radius: Radio inicial
+            end_radius: Radio final
+            frame: Frame actual (0-based)
+            total_frames: Total de frames
+        """
+        if total_frames <= 1:
+            return end_radius
+        
+        # Interpolación lineal
+        t = frame / (total_frames - 1)
+        return start_radius + (end_radius - start_radius) * t
+    
+    def create_concentric_circles(self, count: int, spacing: float) -> list:
+        """
+        Crea múltiples círculos concéntricos
+        
+        Args:
+            count: Número de círculos
+            spacing: Espaciado entre círculos
+            
+        Returns:
+            Lista de geometrías Circle
+        """
+        center = self.get_input_value("center")
+        base_radius = self.get_input_value("radius")
+        segments = int(self.get_input_value("segments"))
+        
+        if isinstance(center, list):
+            center = (center[0], center[1])
+        
+        circles = []
+        
+        for i in range(count):
+            radius = base_radius + (i * spacing)
+            if radius > 0:
+                circle = Circle(center, radius, segments)
+                circles.append(circle)
+        
+        return circles
+    
+    def create_circle_grid(self, rows: int, cols: int, 
+                          spacing_x: float, spacing_y: float) -> list:
+        """
+        Crea una grilla de círculos
+        
+        Args:
+            rows: Número de filas
+            cols: Número de columnas
+            spacing_x: Espaciado horizontal
+            spacing_y: Espaciado vertical
+            
+        Returns:
+            Lista de geometrías Circle
+        """
+        base_center = self.get_input_value("center")
+        radius = self.get_input_value("radius")
+        segments = int(self.get_input_value("segments"))
+        
+        if isinstance(base_center, list):
+            base_center = (base_center[0], base_center[1])
+        
+        circles = []
+        
+        # Calcular offset para centrar la grilla
+        total_width = (cols - 1) * spacing_x
+        total_height = (rows - 1) * spacing_y
+        start_x = base_center[0] - total_width / 2
+        start_y = base_center[1] - total_height / 2
+        
+        for row in range(rows):
+            for col in range(cols):
+                x = start_x + col * spacing_x
+                y = start_y + row * spacing_y
+                
+                circle = Circle((x, y), radius, segments)
+                circles.append(circle)
+        
+        return circles
+    
+    def create_spiral_circles(self, count: int, turns: float, 
+                             radius_growth: float) -> list:
+        """
+        Crea círculos en espiral
+        
+        Args:
+            count: Número de círculos
+            turns: Número de vueltas de la espiral
+            radius_growth: Crecimiento del radio de la espiral
+            
+        Returns:
+            Lista de geometrías Circle
+        """
+        base_center = self.get_input_value("center")
+        circle_radius = self.get_input_value("radius")
+        segments = int(self.get_input_value("segments"))
+        
+        if isinstance(base_center, list):
+            base_center = (base_center[0], base_center[1])
+        
+        circles = []
+        
+        for i in range(count):
+            # Calcular ángulo y radio de la espiral
+            t = i / count  # Parámetro normalizado (0-1)
+            angle = 2 * math.pi * turns * t
+            spiral_radius = radius_growth * t
+            
+            # Posición en la espiral
+            x = base_center[0] + spiral_radius * math.cos(angle)
+            y = base_center[1] + spiral_radius * math.sin(angle)
+            
+            # Crear círculo
+            circle = Circle((x, y), circle_radius, segments)
+            circles.append(circle)
+        
+        return circles
     
     def to_dict(self) -> Dict[str, Any]:
-        """Serialización del nodo incluyendo geometría"""
+        """Serializa el nodo a diccionario"""
         data = super().to_dict()
         
-        # Añadir información específica del círculo para serialización
-        try:
-            circle = self.generate_geometry()
-            data["geometry_data"] = circle.to_dict()
-        except Exception:
-            data["geometry_data"] = None
-            
+        # Añadir parámetros específicos del círculo
+        data['circle_params'] = {
+            'center': self.get_input_value("center"),
+            'radius': self.get_input_value("radius"),
+            'segments': self.get_input_value("segments")
+        }
+        
         return data
     
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'CircleNode':
-        """Deserialización del nodo"""
+        """Deserializa un nodo desde diccionario"""
         node = super().from_dict(data)
         
-        # Restaurar geometría si existe
-        geometry_data = data.get("geometry_data")
-        if geometry_data:
-            try:
-                # Los parámetros ya están restaurados por BaseNode
-                pass
-            except Exception:
-                pass
-                
+        # Restaurar parámetros específicos
+        if 'circle_params' in data:
+            params = data['circle_params']
+            node.set_center(tuple(params.get('center', [0, 0])))
+            node.set_radius(params.get('radius', 100))
+            node.set_segments(params.get('segments', 32))
+        
         return node
 
-# Utilidades adicionales para trabajar con círculos
+# ===========================================
+# VARIACIONES DE CÍRCULO
+# ===========================================
 
-def create_circle_grid(rows: int, cols: int, spacing: float, radius: float) -> List[CircleGeometry]:
-    """Crea una grilla de círculos"""
-    circles = []
+class RingNode(CircleNode):
+    """
+    Nodo que genera anillos (círculos con hueco)
+    """
     
-    start_x = -(cols - 1) * spacing / 2
-    start_y = -(rows - 1) * spacing / 2
+    NODE_TYPE = "ring"
+    NODE_TITLE = "Ring"
+    NODE_DESCRIPTION = "Genera un anillo (círculo con hueco central)"
     
-    for row in range(rows):
-        for col in range(cols):
-            x = start_x + col * spacing
-            y = start_y + row * spacing
-            circle = CircleGeometry(center=(x, y), radius=radius)
-            circles.append(circle)
+    def _init_sockets(self):
+        """Inicializa sockets específicos del anillo"""
+        super()._init_sockets()
+        
+        # Añadir input para radio interno
+        self.add_input("inner_radius", POSITIVE_NUMBER, 50.0)
     
-    return circles
+    def compute(self) -> Dict[str, Any]:
+        """Genera la geometría del anillo"""
+        # Obtener parámetros
+        center = self.get_input_value("center")
+        outer_radius = self.get_input_value("radius")
+        inner_radius = self.get_input_value("inner_radius")
+        segments = int(self.get_input_value("segments"))
+        
+        # Validar que el radio interno sea menor que el externo
+        inner_radius = min(inner_radius, outer_radius * 0.95)
+        
+        if isinstance(center, list):
+            center = (center[0], center[1])
+        
+        # Crear círculo externo e interno
+        outer_circle = Circle(center, outer_radius, segments)
+        inner_circle = Circle(center, inner_radius, segments)
+        
+        # Para un anillo, necesitaríamos una geometría más compleja
+        # Por simplicidad, retornamos el círculo externo
+        # TODO: Implementar geometría de anillo real
+        
+        area = math.pi * (outer_radius ** 2 - inner_radius ** 2)
+        perimeter = 2 * math.pi * (outer_radius + inner_radius)
+        
+        return {
+            "geometry": outer_circle,  # Temporal
+            "area": area,
+            "perimeter": perimeter,
+            "center_out": list(center),
+            "outer_radius": outer_radius,
+            "inner_radius": inner_radius
+        }
 
-def create_concentric_circles(center: Tuple[float, float], 
-                            min_radius: float, 
-                            max_radius: float, 
-                            count: int) -> List[CircleGeometry]:
-    """Crea círculos concéntricos"""
-    circles = []
+class EllipseNode(CircleNode):
+    """
+    Nodo que genera elipses
+    """
     
-    for i in range(count):
-        t = i / (count - 1) if count > 1 else 0
-        radius = min_radius + (max_radius - min_radius) * t
-        circle = CircleGeometry(center=center, radius=radius, filled=False)
-        circles.append(circle)
+    NODE_TYPE = "ellipse"
+    NODE_TITLE = "Ellipse"
+    NODE_DESCRIPTION = "Genera una elipse"
     
-    return circles
+    def _init_sockets(self):
+        """Inicializa sockets específicos de la elipse"""
+        # Modificar sockets del círculo
+        self.add_input("center", VECTOR2D, [0.0, 0.0])
+        self.add_input("radius_x", POSITIVE_NUMBER, 100.0)
+        self.add_input("radius_y", POSITIVE_NUMBER, 50.0)
+        self.add_input("segments", NUMBER, 32)
+        
+        self.add_output("geometry", GEOMETRY)
+        self.add_output("area", NUMBER)
+        self.add_output("perimeter", NUMBER)
+        self.add_output("center_out", VECTOR2D)
+    
+    def compute(self) -> Dict[str, Any]:
+        """Genera la geometría de la elipse"""
+        center = self.get_input_value("center")
+        radius_x = self.get_input_value("radius_x")
+        radius_y = self.get_input_value("radius_y")
+        segments = int(self.get_input_value("segments"))
+        
+        if isinstance(center, list):
+            center = (center[0], center[1])
+        
+        # Crear elipse usando polígono
+        from utils.geometry.base_geometry import Polygon
+        
+        vertices = []
+        for i in range(segments):
+            angle = 2 * math.pi * i / segments
+            x = center[0] + radius_x * math.cos(angle)
+            y = center[1] + radius_y * math.sin(angle)
+            vertices.append((x, y))
+        
+        ellipse = Polygon(vertices)
+        
+        # Calcular área y perímetro aproximados
+        area = math.pi * radius_x * radius_y
+        # Aproximación de Ramanujan para el perímetro de elipse
+        h = ((radius_x - radius_y) / (radius_x + radius_y)) ** 2
+        perimeter = math.pi * (radius_x + radius_y) * (1 + (3 * h) / (10 + math.sqrt(4 - 3 * h)))
+        
+        return {
+            "geometry": ellipse,
+            "area": area,
+            "perimeter": perimeter,
+            "center_out": list(center)
+        }
 
-def circle_intersects_circle(circle1: CircleGeometry, circle2: CircleGeometry) -> bool:
-    """Verifica si dos círculos se intersectan"""
-    dx = circle1.center[0] - circle2.center[0]
-    dy = circle1.center[1] - circle2.center[1]
-    distance = math.sqrt(dx * dx + dy * dy)
-    
-    return distance < (circle1.radius + circle2.radius)
+# ===========================================
+# PRUEBAS DE NODOS DE CÍRCULO
+# ===========================================
 
-# Registro del nodo
-CIRCLE_NODE_REGISTRY = {
-    "circle": CircleNode
-}
+def test_circle_nodes():
+    """Pruebas de los nodos de círculo"""
+    print("🧪 Probando nodos de círculo...")
+    
+    # Probar CircleNode
+    circle_node = CircleNode("Test Circle")
+    circle_node.set_radius(50)
+    circle_node.set_center((100, 100))
+    
+    result = circle_node.compute()
+    assert result["geometry"] is not None
+    assert abs(result["area"] - math.pi * 50 * 50) < 0.01
+    print("✅ CircleNode OK")
+    
+    # Probar generación de geometría
+    geometry = circle_node.generate_geometry()
+    assert isinstance(geometry, Circle)
+    assert geometry.radius == 50
+    print("✅ Generación de geometría OK")
+    
+    # Probar círculos concéntricos
+    concentric = circle_node.create_concentric_circles(3, 25)
+    assert len(concentric) == 3
+    print("✅ Círculos concéntricos OK")
+    
+    # Probar RingNode
+    ring_node = RingNode("Test Ring")
+    ring_result = ring_node.compute()
+    assert ring_result["geometry"] is not None
+    print("✅ RingNode OK")
+    
+    # Probar EllipseNode
+    ellipse_node = EllipseNode("Test Ellipse")
+    ellipse_result = ellipse_node.compute()
+    assert ellipse_result["geometry"] is not None
+    print("✅ EllipseNode OK")
+    
+    print("🎉 Todos los tests de nodos de círculo pasaron!")
+
+if __name__ == "__main__":
+    test_circle_nodes()

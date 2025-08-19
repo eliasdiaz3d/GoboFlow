@@ -1,496 +1,248 @@
 """
-Configuración global para GoboFlow
-Define constantes, paths, configuraciones por defecto y ajustes del sistema
+Configuración de GoboFlow
+Define constantes y configuraciones globales
 """
 
-import os
-import sys
+import logging
 from pathlib import Path
-from typing import Dict, Any, List, Tuple
-from enum import Enum
+import json
 
-# =============================================================================
-# INFORMACIÓN DE LA APLICACIÓN
-# =============================================================================
-
+# Información de la aplicación
 APP_NAME = "GoboFlow"
 APP_VERSION = "0.1.0"
 APP_DESCRIPTION = "Generador procedural de gobos para iluminación teatral"
-APP_AUTHOR = "GoboFlow Team"
-APP_URL = "https://github.com/goboflow/goboflow"
-
-# =============================================================================
-# PATHS Y DIRECTORIOS
-# =============================================================================
-
-# Directorio raíz del proyecto
-ROOT_DIR = Path(__file__).parent.absolute()
-
-# Directorios principales
-CORE_DIR = ROOT_DIR / "core"
-NODES_DIR = ROOT_DIR / "nodes"
-UI_DIR = ROOT_DIR / "ui"
-UTILS_DIR = ROOT_DIR / "utils"
-DATA_DIR = ROOT_DIR / "data"
-TESTS_DIR = ROOT_DIR / "tests"
-DOCS_DIR = ROOT_DIR / "docs"
-EXAMPLES_DIR = ROOT_DIR / "examples"
-
-# Subdirectorios de data
-ICONS_DIR = DATA_DIR / "icons"
-PRESETS_DIR = DATA_DIR / "presets"
-SHADERS_DIR = DATA_DIR / "shaders"
-FONTS_DIR = DATA_DIR / "fonts"
-
-# Subdirectorios de iconos
-NODES_ICONS_DIR = ICONS_DIR / "nodes"
-UI_ICONS_DIR = ICONS_DIR / "ui"
-
-# Directorio de usuario (home)
-USER_HOME = Path.home()
-USER_CONFIG_DIR = USER_HOME / ".goboflow"
-USER_PROJECTS_DIR = USER_CONFIG_DIR / "projects"
-USER_PRESETS_DIR = USER_CONFIG_DIR / "presets"
-USER_CACHE_DIR = USER_CONFIG_DIR / "cache"
-USER_LOGS_DIR = USER_CONFIG_DIR / "logs"
-
-# Crear directorios de usuario si no existen
-def ensure_user_directories():
-    """Crea los directorios de usuario necesarios"""
-    for directory in [USER_CONFIG_DIR, USER_PROJECTS_DIR, USER_PRESETS_DIR, USER_CACHE_DIR, USER_LOGS_DIR]:
-        directory.mkdir(parents=True, exist_ok=True)
-
-# =============================================================================
-# CONFIGURACIÓN DE ARCHIVOS
-# =============================================================================
-
-# Extensiones de archivo
-PROJECT_EXTENSION = ".gflow"
-PRESET_EXTENSION = ".gpreset"
-EXPORT_EXTENSIONS = [".svg", ".png", ".jpg", ".pdf", ".eps"]
-
-# Filtros de archivos para diálogos
-FILE_FILTERS = {
-    "project": f"GoboFlow Projects (*{PROJECT_EXTENSION})",
-    "preset": f"GoboFlow Presets (*{PRESET_EXTENSION})",
-    "svg": "SVG Files (*.svg)",
-    "image": "Image Files (*.png *.jpg *.jpeg *.bmp *.tiff)",
-    "all": "All Files (*.*)"
-}
-
-# Configuración de auto-guardado
-AUTO_SAVE_ENABLED = True
-AUTO_SAVE_INTERVAL = 300  # segundos (5 minutos)
-MAX_AUTO_SAVE_FILES = 10
-
-# =============================================================================
-# CONFIGURACIÓN DE RENDERIZADO
-# =============================================================================
-
-class RenderQuality(Enum):
-    """Calidades de renderizado disponibles"""
-    DRAFT = "draft"
-    PREVIEW = "preview"
-    FINAL = "final"
-    ULTRA = "ultra"
-
-# Configuraciones de renderizado por calidad
-RENDER_SETTINGS = {
-    RenderQuality.DRAFT: {
-        "resolution": (512, 512),
-        "dpi": 72,
-        "antialiasing": False,
-        "max_segments": 16,
-        "simplify_curves": True
-    },
-    RenderQuality.PREVIEW: {
-        "resolution": (1024, 1024),
-        "dpi": 150,
-        "antialiasing": True,
-        "max_segments": 32,
-        "simplify_curves": False
-    },
-    RenderQuality.FINAL: {
-        "resolution": (2048, 2048),
-        "dpi": 300,
-        "antialiasing": True,
-        "max_segments": 64,
-        "simplify_curves": False
-    },
-    RenderQuality.ULTRA: {
-        "resolution": (4096, 4096),
-        "dpi": 600,
-        "antialiasing": True,
-        "max_segments": 128,
-        "simplify_curves": False
-    }
-}
-
-# Configuración por defecto
-DEFAULT_RENDER_QUALITY = RenderQuality.PREVIEW
-DEFAULT_RESOLUTION = RENDER_SETTINGS[DEFAULT_RENDER_QUALITY]["resolution"]
-DEFAULT_DPI = RENDER_SETTINGS[DEFAULT_RENDER_QUALITY]["dpi"]
-
-# Formatos de exportación
-EXPORT_FORMATS = {
-    "svg": {
-        "name": "SVG Vector",
-        "extension": ".svg",
-        "supports_vector": True,
-        "supports_raster": False,
-        "default_dpi": 96
-    },
-    "png": {
-        "name": "PNG Image",
-        "extension": ".png",
-        "supports_vector": False,
-        "supports_raster": True,
-        "default_dpi": 300
-    },
-    "jpg": {
-        "name": "JPEG Image", 
-        "extension": ".jpg",
-        "supports_vector": False,
-        "supports_raster": True,
-        "default_dpi": 300
-    },
-    "pdf": {
-        "name": "PDF Document",
-        "extension": ".pdf",
-        "supports_vector": True,
-        "supports_raster": True,
-        "default_dpi": 300
-    }
-}
-
-# =============================================================================
-# CONFIGURACIÓN DE LA INTERFAZ
-# =============================================================================
-
-# Colores del tema (modo oscuro por defecto)
-DARK_THEME = {
-    "background": "#2b2b2b",
-    "background_light": "#3c3c3c",
-    "background_dark": "#1e1e1e",
-    "foreground": "#ffffff",
-    "foreground_dim": "#cccccc",
-    "accent": "#0078d4",
-    "accent_hover": "#106ebe",
-    "success": "#4caf50",
-    "warning": "#ff9800",
-    "error": "#f44336",
-    "border": "#555555",
-    "border_light": "#777777",
-    "selection": "#0078d4",
-    "selection_inactive": "#404040"
-}
-
-LIGHT_THEME = {
-    "background": "#ffffff",
-    "background_light": "#f5f5f5",
-    "background_dark": "#e0e0e0",
-    "foreground": "#000000",
-    "foreground_dim": "#666666",
-    "accent": "#0078d4",
-    "accent_hover": "#106ebe",
-    "success": "#4caf50",
-    "warning": "#ff9800",
-    "error": "#f44336",
-    "border": "#cccccc",
-    "border_light": "#e0e0e0",
-    "selection": "#0078d4",
-    "selection_inactive": "#cccccc"
-}
-
-# Tema por defecto
-DEFAULT_THEME = "dark"
-CURRENT_THEME = DARK_THEME
 
 # Configuración de ventana
+WINDOW_TITLE = f"{APP_NAME} v{APP_VERSION}"
 WINDOW_DEFAULT_SIZE = (1200, 800)
 WINDOW_MIN_SIZE = (800, 600)
-WINDOW_TITLE = f"{APP_NAME} v{APP_VERSION}"
 
-# Configuración de paneles
-PANEL_SIZES = {
-    "node_library": 250,
-    "properties": 300,
-    "outliner": 200,
-    "console": 150,
-    "viewport": 400
-}
+# Directorios
+ROOT_DIR = Path(__file__).parent.absolute()
+USER_HOME = Path.home()
+USER_CONFIG_DIR = USER_HOME / ".goboflow"
+USER_LOGS_DIR = USER_CONFIG_DIR / "logs"
+USER_PROJECTS_DIR = USER_CONFIG_DIR / "projects"
 
-# =============================================================================
-# CONFIGURACIÓN DE NODOS
-# =============================================================================
-
-# Colores de nodos por categoría
-NODE_COLORS = {
-    "generators": "#4CAF50",      # Verde
-    "modifiers": "#2196F3",       # Azul
-    "operations": "#FF9800",      # Naranja
-    "materials": "#9C27B0",       # Púrpura
-    "inputs": "#607D8B",          # Gris azulado
-    "outputs": "#F44336",         # Rojo
-    "parameters": "#FFC107",      # Amarillo
-    "math": "#795548",            # Marrón
-    "utility": "#9E9E9E",         # Gris
-    "base": "#757575"             # Gris oscuro
-}
-
-# Configuración visual de nodos
-NODE_VISUAL = {
-    "width": 160,
-    "height": 80,
-    "title_height": 24,
-    "socket_size": 12,
-    "socket_spacing": 20,
-    "corner_radius": 6,
-    "border_width": 2,
-    "shadow_offset": (2, 2),
-    "shadow_blur": 4
-}
-
-# Configuración de conexiones
-CONNECTION_VISUAL = {
-    "width": 2,
-    "width_selected": 3,
-    "curve_strength": 100,
-    "hover_tolerance": 5,
-    "color_default": "#888888",
-    "color_selected": "#ffffff",
-    "color_invalid": "#ff4444"
-}
-
-# =============================================================================
-# CONFIGURACIÓN DE PERFORMANCE
-# =============================================================================
-
-# Cache del sistema
-CACHE_ENABLED = True
-CACHE_MAX_SIZE = 1000  # Número máximo de resultados cacheados
-CACHE_CLEANUP_THRESHOLD = 0.8  # Limpiar cuando se alcance 80% de capacidad
-
-# Ejecución
-MAX_EXECUTION_TIME = 30.0  # segundos
-MAX_RECURSION_DEPTH = 100
-ENABLE_PARALLEL_EXECUTION = True
-MAX_WORKER_THREADS = 4
-
-# Viewport
-VIEWPORT_MAX_FPS = 60
-VIEWPORT_UPDATE_THRESHOLD = 0.016  # ~60 FPS
-ENABLE_VIEWPORT_CULLING = True
-VIEWPORT_CULLING_MARGIN = 100  # pixels
-
-# =============================================================================
-# CONFIGURACIÓN DE LOGGING
-# =============================================================================
-
-import logging
+# Archivos
+CONFIG_FILE = USER_CONFIG_DIR / "config.json"
+LOG_FILE = USER_LOGS_DIR / "goboflow.log"
 
 # Configuración de logging
 LOG_LEVEL = logging.INFO
 LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 
-LOG_FILE = USER_LOGS_DIR / "goboflow.log"
-LOG_MAX_SIZE = 10 * 1024 * 1024  # 10 MB
-LOG_BACKUP_COUNT = 5
+# Modo debug
+DEBUG_MODE = True
 
-# =============================================================================
-# CONFIGURACIÓN DE GEOMETRÍA
-# =============================================================================
-
-# Límites de geometría
-GEOMETRY_LIMITS = {
-    "max_points": 100000,
-    "max_segments": 1000,
-    "min_radius": 0.1,
-    "max_radius": 10000,
-    "min_size": 0.1,
-    "max_size": 10000,
-    "precision": 6  # decimales para coordenadas
+# Tema dark por defecto
+DARK_THEME = {
+    'background': '#2b2b2b',
+    'background_light': '#3c3c3c',
+    'foreground': '#ffffff',
+    'selection': '#0078d4',
+    'border': '#555555',
+    'accent': '#0078d4'
 }
 
-# Tolerancias para operaciones geométricas
-GEOMETRY_TOLERANCE = {
-    "epsilon": 1e-6,
-    "curve_tolerance": 0.1,
-    "boolean_tolerance": 1e-4,
-    "snap_distance": 5.0  # pixels
+# Configuración por defecto
+DEFAULT_CONFIG = {
+    'app': {
+        'theme': 'dark',
+        'language': 'es',
+        'auto_save': True,
+        'recent_projects': []
+    },
+    'render': {
+        'quality': 'preview',  # preview, high, ultra
+        'anti_aliasing': True,
+        'cache_enabled': True
+    },
+    'nodes': {
+        'auto_connect': True,
+        'show_grid': True,
+        'snap_to_grid': False
+    },
+    'export': {
+        'default_format': 'svg',
+        'default_resolution': [1024, 1024],
+        'default_dpi': 300
+    }
 }
 
-# =============================================================================
-# CONFIGURACIÓN DE DESARROLLO
-# =============================================================================
+# Variable global de configuración
+config = DEFAULT_CONFIG.copy()
 
-# Flags de desarrollo
-DEBUG_MODE = __debug__
-ENABLE_PROFILING = False
-ENABLE_MEMORY_TRACKING = False
-SHOW_DEBUG_INFO = DEBUG_MODE
-
-# Testing
-RUN_TESTS_ON_STARTUP = False
-TEST_DATA_DIR = TESTS_DIR / "data"
-
-# =============================================================================
-# CONFIGURACIÓN DINÁMICA
-# =============================================================================
-
-class Config:
-    """
-    Clase para manejo dinámico de configuración
-    Permite cambiar configuraciones en tiempo de ejecución
-    """
-    
-    def __init__(self):
-        self._settings = {}
-        self._load_defaults()
-        
-    def _load_defaults(self):
-        """Carga configuraciones por defecto"""
-        self._settings = {
-            "app": {
-                "name": APP_NAME,
-                "version": APP_VERSION,
-                "theme": DEFAULT_THEME
-            },
-            "render": {
-                "quality": DEFAULT_RENDER_QUALITY.value,
-                "resolution": DEFAULT_RESOLUTION,
-                "dpi": DEFAULT_DPI
-            },
-            "window": {
-                "size": WINDOW_DEFAULT_SIZE,
-                "min_size": WINDOW_MIN_SIZE
-            },
-            "performance": {
-                "cache_enabled": CACHE_ENABLED,
-                "max_execution_time": MAX_EXECUTION_TIME,
-                "max_threads": MAX_WORKER_THREADS
-            },
-            "auto_save": {
-                "enabled": AUTO_SAVE_ENABLED,
-                "interval": AUTO_SAVE_INTERVAL
-            }
-        }
-    
-    def get(self, key: str, default=None):
-        """Obtiene un valor de configuración usando notación de punto"""
-        keys = key.split('.')
-        value = self._settings
-        
-        try:
-            for k in keys:
-                value = value[k]
-            return value
-        except (KeyError, TypeError):
-            return default
-    
-    def set(self, key: str, value: Any):
-        """Establece un valor de configuración usando notación de punto"""
-        keys = key.split('.')
-        settings = self._settings
-        
-        # Navegar hasta el último nivel
-        for k in keys[:-1]:
-            if k not in settings:
-                settings[k] = {}
-            settings = settings[k]
-        
-        # Establecer el valor
-        settings[keys[-1]] = value
-    
-    def load_from_file(self, filepath: Path):
-        """Carga configuración desde archivo JSON"""
-        try:
-            import json
-            with open(filepath, 'r', encoding='utf-8') as f:
-                file_settings = json.load(f)
-                self._merge_settings(file_settings)
-        except Exception as e:
-            print(f"Error loading config from {filepath}: {e}")
-    
-    def save_to_file(self, filepath: Path):
-        """Guarda configuración a archivo JSON"""
-        try:
-            import json
-            filepath.parent.mkdir(parents=True, exist_ok=True)
-            with open(filepath, 'w', encoding='utf-8') as f:
-                json.dump(self._settings, f, indent=2, ensure_ascii=False)
-        except Exception as e:
-            print(f"Error saving config to {filepath}: {e}")
-    
-    def _merge_settings(self, new_settings: Dict[str, Any]):
-        """Fusiona nuevas configuraciones con las existentes"""
-        def merge_dict(base: Dict, new: Dict):
-            for key, value in new.items():
-                if key in base and isinstance(base[key], dict) and isinstance(value, dict):
-                    merge_dict(base[key], value)
-                else:
-                    base[key] = value
-        
-        merge_dict(self._settings, new_settings)
-    
-    def reset_to_defaults(self):
-        """Resetea toda la configuración a valores por defecto"""
-        self._load_defaults()
-    
-    def get_all(self) -> Dict[str, Any]:
-        """Obtiene toda la configuración"""
-        return self._settings.copy()
-
-# Instancia global de configuración
-config = Config()
-
-# =============================================================================
-# FUNCIONES DE UTILIDAD
-# =============================================================================
-
-def get_resource_path(relative_path: str) -> Path:
-    """Obtiene la ruta absoluta de un recurso"""
-    if hasattr(sys, '_MEIPASS'):
-        # Ejecutándose como ejecutable empaquetado
-        return Path(sys._MEIPASS) / relative_path
-    else:
-        # Ejecutándose como script
-        return ROOT_DIR / relative_path
-
-def get_user_config_path() -> Path:
-    """Obtiene la ruta del archivo de configuración del usuario"""
-    return USER_CONFIG_DIR / "config.json"
+def ensure_directories():
+    """Asegura que los directorios necesarios existan"""
+    USER_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    USER_LOGS_DIR.mkdir(parents=True, exist_ok=True)
+    USER_PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
 
 def load_user_config():
     """Carga la configuración del usuario"""
-    user_config_path = get_user_config_path()
-    if user_config_path.exists():
-        config.load_from_file(user_config_path)
+    global config
+    
+    ensure_directories()
+    
+    try:
+        if CONFIG_FILE.exists():
+            with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+                user_config = json.load(f)
+                
+            # Merge con configuración por defecto
+            config = merge_configs(DEFAULT_CONFIG, user_config)
+            print(f"✅ Configuración cargada desde {CONFIG_FILE}")
+        else:
+            print(f"📁 Usando configuración por defecto")
+            
+    except Exception as e:
+        print(f"⚠️ Error cargando configuración: {e}")
+        config = DEFAULT_CONFIG.copy()
 
 def save_user_config():
     """Guarda la configuración del usuario"""
-    user_config_path = get_user_config_path()
-    config.save_to_file(user_config_path)
+    ensure_directories()
+    
+    try:
+        with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+            json.dump(config, f, indent=2, ensure_ascii=False)
+        print(f"💾 Configuración guardada en {CONFIG_FILE}")
+        
+    except Exception as e:
+        print(f"❌ Error guardando configuración: {e}")
+
+def merge_configs(default: dict, user: dict) -> dict:
+    """Combina configuración por defecto con configuración de usuario"""
+    result = default.copy()
+    
+    for key, value in user.items():
+        if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+            result[key] = merge_configs(result[key], value)
+        else:
+            result[key] = value
+    
+    return result
+
+def get_config_value(key_path: str, default_value=None):
+    """Obtiene un valor de configuración usando notación de punto"""
+    keys = key_path.split('.')
+    value = config
+    
+    try:
+        for key in keys:
+            value = value[key]
+        return value
+    except (KeyError, TypeError):
+        return default_value
+
+def set_config_value(key_path: str, value):
+    """Establece un valor de configuración usando notación de punto"""
+    keys = key_path.split('.')
+    target = config
+    
+    for key in keys[:-1]:
+        if key not in target:
+            target[key] = {}
+        target = target[key]
+    
+    target[keys[-1]] = value
 
 def initialize_config():
     """Inicializa el sistema de configuración"""
-    ensure_user_directories()
     load_user_config()
+    
+    # Configurar logging
+    ensure_directories()
+    
+    logging.basicConfig(
+        level=LOG_LEVEL,
+        format=LOG_FORMAT,
+        handlers=[
+            logging.FileHandler(LOG_FILE, encoding='utf-8'),
+            logging.StreamHandler()
+        ]
+    )
+    
+    logger = logging.getLogger(__name__)
+    logger.info(f"Iniciando {APP_NAME} v{APP_VERSION}")
+    logger.info(f"Directorio de configuración: {USER_CONFIG_DIR}")
+    
+    return logger
 
-# Inicializar automáticamente al importar
-initialize_config()
+def reset_config_to_defaults():
+    """Restaura la configuración a valores por defecto"""
+    global config
+    config = DEFAULT_CONFIG.copy()
+    save_user_config()
+    print("🔄 Configuración restaurada a valores por defecto")
 
-# =============================================================================
-# EXPORTAR CONFIGURACIONES PRINCIPALES
-# =============================================================================
+def get_recent_projects():
+    """Obtiene la lista de proyectos recientes"""
+    return get_config_value('app.recent_projects', [])
 
-__all__ = [
-    'APP_NAME', 'APP_VERSION', 'APP_DESCRIPTION',
-    'ROOT_DIR', 'DATA_DIR', 'USER_CONFIG_DIR',
-    'RENDER_SETTINGS', 'RenderQuality', 'DEFAULT_RENDER_QUALITY',
-    'DARK_THEME', 'LIGHT_THEME', 'CURRENT_THEME',
-    'NODE_COLORS', 'NODE_VISUAL', 'CONNECTION_VISUAL',
-    'GEOMETRY_LIMITS', 'GEOMETRY_TOLERANCE',
-    'config', 'initialize_config', 'save_user_config'
-]
+def add_recent_project(project_path: str):
+    """Añade un proyecto a la lista de recientes"""
+    recent = get_recent_projects()
+    
+    # Remover si ya existe
+    if project_path in recent:
+        recent.remove(project_path)
+    
+    # Añadir al principio
+    recent.insert(0, project_path)
+    
+    # Limitar a 10 proyectos
+    recent = recent[:10]
+    
+    set_config_value('app.recent_projects', recent)
+    save_user_config()
+
+def get_theme_colors():
+    """Obtiene los colores del tema actual"""
+    theme_name = get_config_value('app.theme', 'dark')
+    
+    if theme_name == 'dark':
+        return DARK_THEME
+    else:
+        # Tema claro (por implementar)
+        return {
+            'background': '#ffffff',
+            'background_light': '#f5f5f5',
+            'foreground': '#000000',
+            'selection': '#0078d4',
+            'border': '#cccccc',
+            'accent': '#0078d4'
+        }
+
+# Inicializar configuración al importar
+if __name__ != "__main__":
+    try:
+        initialize_config()
+    except Exception as e:
+        print(f"⚠️ Error inicializando configuración: {e}")
+
+# Para testing
+if __name__ == "__main__":
+    print("🧪 Probando sistema de configuración...")
+    
+    # Inicializar
+    logger = initialize_config()
+    
+    # Mostrar configuración actual
+    print("\n📋 Configuración actual:")
+    for section, values in config.items():
+        print(f"  {section}:")
+        for key, value in values.items():
+            print(f"    {key}: {value}")
+    
+    # Probar get/set
+    print(f"\n🔍 Tema actual: {get_config_value('app.theme')}")
+    print(f"🔍 Calidad de render: {get_config_value('render.quality')}")
+    
+    # Probar proyectos recientes
+    add_recent_project("/path/to/project1.gflow")
+    add_recent_project("/path/to/project2.gflow")
+    print(f"📁 Proyectos recientes: {get_recent_projects()}")
+    
+    print("\n✅ Tests de configuración completados")
