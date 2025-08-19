@@ -36,6 +36,51 @@ except ImportError as e:
     create_node_editor = None
     print(f"⚠️ Editor de nodos no disponible: {e}")
 
+try:
+    from ui.viewport_widget import create_viewport_widget
+    VIEWPORT_AVAILABLE = True
+    print("✅ Viewport widget disponible")
+except ImportError as e:
+    VIEWPORT_AVAILABLE = False
+    create_viewport_widget = None
+    print(f"⚠️ Viewport widget no disponible: {e}")
+
+try:
+    from ui.properties_panel import create_properties_panel as create_props_panel
+    PROPERTIES_AVAILABLE = True
+    print("✅ Properties panel disponible")
+except ImportError as e:
+    PROPERTIES_AVAILABLE = False
+    create_props_panel = None
+    print(f"⚠️ Properties panel no disponible: {e}")
+
+# Asegurar compatibilidad
+if not VIEWPORT_AVAILABLE:
+    def create_viewport_widget(parent=None):
+        from PyQt6.QtWidgets import QLabel, QVBoxLayout, QWidget
+        from PyQt6.QtCore import Qt
+        
+        widget = QWidget(parent)
+        layout = QVBoxLayout(widget)
+        label = QLabel("Vista previa próximamente")
+        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        label.setStyleSheet("color: #888; font-size: 16px; background: #2b2b2b;")
+        layout.addWidget(label)
+        return widget
+
+if not PROPERTIES_AVAILABLE:
+    def create_props_panel(parent=None):
+        from PyQt6.QtWidgets import QLabel, QVBoxLayout, QWidget
+        from PyQt6.QtCore import Qt
+        
+        widget = QWidget(parent)
+        layout = QVBoxLayout(widget)
+        label = QLabel("Panel de propiedades próximamente")
+        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        label.setStyleSheet("color: #888; font-size: 12px; background: #353535;")
+        layout.addWidget(label)
+        return widget
+
 class GoboFlowMainWindow(QMainWindow):
     """
     Ventana principal completa de GoboFlow
@@ -54,7 +99,8 @@ class GoboFlowMainWindow(QMainWindow):
         # Componentes principales
         self.node_editor = None
         self.viewport_widget = None
-        
+        self.properties_panel = None
+
         # Configurar ventana
         self.setWindowTitle(f"{APP_NAME} v{APP_VERSION}")
         self.setMinimumSize(1000, 700)
@@ -68,11 +114,16 @@ class GoboFlowMainWindow(QMainWindow):
         self.connect_signals()
         
         # Aplicar tema dark
-        self.apply_dark_theme()
+        self.apply_dark_theme()     
+
+        # Timer para auto-refresh del viewport
+        self.viewport_refresh_timer = QTimer()
+        self.viewport_refresh_timer.timeout.connect(self.update_viewport)
+        self.viewport_refresh_timer.start(1000)  # Actualizar cada segundo
         
-        # Crear proyecto de ejemplo
+         # Crear proyecto de ejemplo
         QTimer.singleShot(500, self.create_example_project)
-        
+
         print("🎨 Ventana principal completa de GoboFlow inicializada")
     
     def init_ui(self):
@@ -199,14 +250,26 @@ class GoboFlowMainWindow(QMainWindow):
             placeholder.setStyleSheet("color: #888; font-size: 16px; background: #2b2b2b;")
             center_splitter.addWidget(placeholder)
         
-        # Viewport placeholder
-        viewport_placeholder = self.create_viewport_placeholder()
-        center_splitter.addWidget(viewport_placeholder)
+        # Viewport con vista previa SVG
+        if VIEWPORT_AVAILABLE:
+            print("🖼️ Creando viewport con SVG...")
+            self.viewport_widget = create_viewport_widget()
+            center_splitter.addWidget(self.viewport_widget)
+            
+            # Conectar señales del viewport si están disponibles
+            if hasattr(self.viewport_widget, 'export_requested'):
+                self.viewport_widget.export_requested.connect(self.on_viewport_export_requested)
+        else:
+            print("📱 Creando viewport placeholder...")
+            # Viewport placeholder
+            self.viewport_widget = create_viewport_widget()
+            center_splitter.addWidget(self.viewport_widget)
         
-        # Configurar tamaños
-        center_splitter.setSizes([500, 200])
+        # Configurar tamaños: más espacio para el editor
+        center_splitter.setSizes([400, 300])
         
         return center_widget
+
     
     def create_viewport_placeholder(self) -> QWidget:
         """Crea placeholder para el viewport"""
@@ -231,43 +294,57 @@ class GoboFlowMainWindow(QMainWindow):
     
     def create_properties_panel(self) -> QWidget:
         """Crea el panel de propiedades"""
-        panel = QFrame()
-        panel.setFrameStyle(QFrame.Shape.StyledPanel)
-        
-        layout = QVBoxLayout(panel)
-        
-        # Título
-        title = QLabel("⚙️ Propiedades")
-        title.setStyleSheet("font-weight: bold; font-size: 14px; padding: 10px; background: #404040;")
-        layout.addWidget(title)
-        
-        # Información del nodo seleccionado
-        self.selected_node_info = QLabel("Selecciona un nodo para ver sus propiedades")
-        self.selected_node_info.setWordWrap(True)
-        self.selected_node_info.setStyleSheet("padding: 10px; color: #ccc;")
-        layout.addWidget(self.selected_node_info)
-        
-        # Propiedades editables (placeholder)
-        props_title = QLabel("📝 Parámetros:")
-        props_title.setStyleSheet("font-weight: bold; margin-top: 20px; color: #00aaff;")
-        layout.addWidget(props_title)
-        
-        self.properties_area = QLabel("No hay parámetros editables")
-        self.properties_area.setStyleSheet("padding: 10px; color: #888;")
-        layout.addWidget(self.properties_area)
-        
-        layout.addStretch()
-        
-        # Información del proyecto
-        project_title = QLabel("📁 Proyecto:")
-        project_title.setStyleSheet("font-weight: bold; color: #00aaff;")
-        layout.addWidget(project_title)
-        
-        self.project_info = QLabel("Proyecto nuevo")
-        self.project_info.setStyleSheet("padding: 5px; color: #ccc; font-size: 11px;")
-        layout.addWidget(self.project_info)
-        
-        return panel
+        if PROPERTIES_AVAILABLE:
+            print("🎛️ Creando panel de propiedades interactivo...")
+            # Panel de propiedades completo e interactivo
+            self.properties_panel = create_props_panel()
+            
+            # Conectar señales si están disponibles
+            if hasattr(self.properties_panel, 'parameter_changed'):
+                self.properties_panel.parameter_changed.connect(self.on_parameter_changed)
+            
+            return self.properties_panel
+        else:
+            print("📋 Creando panel de propiedades básico...")
+            # Panel básico (versión simplificada)
+            panel = QFrame()
+            panel.setFrameStyle(QFrame.Shape.StyledPanel)
+            
+            layout = QVBoxLayout(panel)
+            
+            # Título
+            title = QLabel("⚙️ Propiedades")
+            title.setStyleSheet("font-weight: bold; font-size: 14px; padding: 10px; background: #404040;")
+            layout.addWidget(title)
+            
+            # Información del nodo seleccionado
+            self.selected_node_info = QLabel("Selecciona un nodo para ver sus propiedades")
+            self.selected_node_info.setWordWrap(True)
+            self.selected_node_info.setStyleSheet("padding: 10px; color: #ccc;")
+            layout.addWidget(self.selected_node_info)
+            
+            # Propiedades editables (placeholder)
+            props_title = QLabel("🔧 Parámetros:")
+            props_title.setStyleSheet("font-weight: bold; margin-top: 20px; color: #00aaff;")
+            layout.addWidget(props_title)
+            
+            self.properties_area = QLabel("No hay parámetros editables")
+            self.properties_area.setStyleSheet("padding: 10px; color: #888;")
+            layout.addWidget(self.properties_area)
+            
+            layout.addStretch()
+            
+            # Información del proyecto
+            project_title = QLabel("📁 Proyecto:")
+            project_title.setStyleSheet("font-weight: bold; color: #00aaff;")
+            layout.addWidget(project_title)
+            
+            self.project_info = QLabel("Proyecto nuevo")
+            self.project_info.setStyleSheet("padding: 5px; color: #ccc; font-size: 11px;")
+            layout.addWidget(self.project_info)
+            
+            return panel
+
     
     def init_menus(self):
         """Inicializa el menú"""
@@ -437,6 +514,9 @@ class GoboFlowMainWindow(QMainWindow):
             # Posicionar nodos automáticamente
             self.arrange_nodes_automatically()
             
+            # Ejecutar automáticamente para mostrar vista previa
+            QTimer.singleShot(1000, self.auto_execute_and_update)
+            
             self.statusBar().showMessage("Proyecto de ejemplo creado")
             print("📋 Proyecto de ejemplo creado con 3 nodos")
             
@@ -545,10 +625,15 @@ class GoboFlowMainWindow(QMainWindow):
             )
     
     def execute_graph(self):
-        """Ejecuta el grafo de nodos"""
+        """Ejecuta el grafo de nodos con actualización automática del viewport"""
         if self.node_editor:
+            # Ejecutar grafo con efectos visuales
             self.node_editor.execute_graph()
-            self.statusBar().showMessage("Grafo ejecutado con efectos visuales")
+            
+            # Actualizar viewport automáticamente
+            QTimer.singleShot(200, self.update_viewport)
+            
+            self.statusBar().showMessage("Grafo ejecutado - Vista previa actualizada")
     
     def clear_graph(self):
         """Limpia el grafo"""
@@ -742,6 +827,176 @@ class GoboFlowMainWindow(QMainWindow):
         else:
             event.ignore()
 
+    def connect_signals(self):
+        """Conecta las señales"""
+        if self.node_editor:
+            self.node_editor.node_selected.connect(self.on_node_selected)
+            self.node_editor.node_added.connect(self.on_node_added)
+            self.node_editor.node_removed.connect(self.on_node_removed)
+            self.node_editor.connection_created.connect(self.on_connection_created)
+            
+            # Conectar cambios en el grafo con el viewport
+            self.node_editor.node_added.connect(self.update_viewport)
+            self.node_editor.node_removed.connect(self.update_viewport)
+            self.node_editor.connection_created.connect(self.update_viewport)
+
+    def on_node_selected(self, node):
+        """Maneja selección de nodo"""
+        if node:
+            # Actualizar panel de propiedades
+            if hasattr(self, 'properties_panel') and hasattr(self.properties_panel, 'set_node'):
+                self.properties_panel.set_node(node)
+            
+            # Actualizar información básica si no hay panel completo
+            if hasattr(self, 'selected_node_info'):
+                info = f"📋 {node.title}\n"
+                info += f"Tipo: {node.NODE_TYPE}\n"
+                info += f"Categoría: {getattr(node, 'NODE_CATEGORY', 'N/A')}\n"
+                info += f"ID: {node.id[:8]}..."
+                self.selected_node_info.setText(info)
+        else:
+            # Ningún nodo seleccionado
+            if hasattr(self, 'properties_panel') and hasattr(self.properties_panel, 'set_node'):
+                self.properties_panel.set_node(None)
+            
+            if hasattr(self, 'selected_node_info'):
+                self.selected_node_info.setText("Selecciona un nodo para ver sus propiedades")
+
+    def on_parameter_changed(self, node, param_name, new_value):
+        """Maneja cambios en parámetros desde el panel de propiedades"""
+        print(f"🎛️ Parámetro cambió: {node.title}.{param_name} = {new_value}")
+        
+        # Ejecutar el grafo automáticamente después de cambio de parámetro
+        QTimer.singleShot(100, self.auto_execute_and_update)
+        
+        # Mostrar en status bar
+        self.statusBar().showMessage(f"Actualizado: {param_name} = {new_value}")
+
+    def auto_execute_and_update(self):
+        """Ejecuta el grafo automáticamente y actualiza el viewport"""
+        try:
+            if self.node_editor and hasattr(self.node_editor, 'scene'):
+                # Ejecutar grafo
+                self.node_editor.scene.execute_graph()
+                
+                # Actualizar viewport
+                self.update_viewport()
+                
+        except Exception as e:
+            print(f"❌ Error en auto-ejecución: {e}")
+
+    def update_viewport(self):
+        """Actualiza el viewport con la geometría más reciente"""
+        try:
+            if not hasattr(self, 'viewport_widget') or not self.viewport_widget:
+                return
+            
+            if not hasattr(self.viewport_widget, 'update_preview'):
+                return
+            
+            # Buscar nodo viewer en el grafo
+            viewer_node = self.find_viewer_node()
+            
+            if viewer_node:
+                # Intentar obtener datos del viewer
+                if hasattr(viewer_node, 'get_last_data'):
+                    geometry_data = viewer_node.get_last_data()
+                    self.viewport_widget.update_preview(geometry_data)
+                elif hasattr(viewer_node, 'compute'):
+                    # Ejecutar el nodo viewer para obtener datos
+                    result = viewer_node.compute()
+                    geometry_data = result.get('display_geometry')
+                    self.viewport_widget.update_preview(geometry_data)
+            else:
+                # No hay viewer, buscar cualquier geometría en el grafo
+                geometry_data = self.find_any_geometry()
+                self.viewport_widget.update_preview(geometry_data)
+                
+        except Exception as e:
+            print(f"❌ Error actualizando viewport: {e}")
+
+    def find_viewer_node(self):
+        """Busca el primer nodo viewer en el grafo"""
+        try:
+            if not self.node_editor or not hasattr(self.node_editor, 'scene'):
+                return None
+            
+            for node in self.node_editor.scene.node_graph.nodes.values():
+                if hasattr(node, 'NODE_TYPE') and node.NODE_TYPE == 'viewer':
+                    return node
+            
+            return None
+        except:
+            return None
+
+    def find_any_geometry(self):
+        """Busca cualquier geometría generada en el grafo"""
+        try:
+            if not self.node_editor or not hasattr(self.node_editor, 'scene'):
+                return None
+            
+            # Buscar nodos que generen geometría
+            for node in self.node_editor.scene.node_graph.nodes.values():
+                if hasattr(node, 'NODE_TYPE'):
+                    if node.NODE_TYPE in ['circle', 'rectangle', 'polygon']:
+                        if hasattr(node, 'generate_geometry'):
+                            return node.generate_geometry()
+                        elif hasattr(node, 'compute'):
+                            result = node.compute()
+                            if 'geometry' in result:
+                                return result['geometry']
+            
+            return None
+        except:
+            return None
+
+    def on_viewport_export_requested(self, format_type):
+        """Maneja solicitudes de exportación desde el viewport"""
+        if format_type == "svg":
+            self.export_svg_from_viewport()
+        elif format_type == "png":
+            self.export_png_from_viewport()
+
+    def export_svg_from_viewport(self):
+        """Exporta SVG desde el viewport"""
+        try:
+            if not hasattr(self, 'viewport_widget'):
+                self.export_svg()  # Fallback al método original
+                return
+            
+            file_path, _ = QFileDialog.getSaveFileName(
+                self, "Exportar SVG desde Viewport",
+                str(Path.home() / "gobo_viewport.svg"),
+                "SVG Files (*.svg);;All Files (*.*)"
+            )
+            
+            if file_path:
+                svg_content = self.viewport_widget.get_current_svg()
+                
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    f.write(svg_content)
+                
+                self.statusBar().showMessage(f"SVG exportado: {Path(file_path).name}")
+                
+                QMessageBox.information(
+                    self, "Exportación Completada",
+                    f"SVG exportado exitosamente a:\n{file_path}"
+                )
+                
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Error exportando SVG: {e}")
+
+    def export_png_from_viewport(self):
+        """Exporta PNG desde el viewport (futuro)"""
+        QMessageBox.information(
+            self, "Próximamente",
+            "La exportación PNG estará disponible en una próxima versión.\n\n"
+            "Por ahora, puedes:\n"
+            "1. Exportar como SVG\n"
+            "2. Abrir el SVG en un navegador\n"
+            "3. Hacer captura de pantalla o usar una herramienta de conversión"
+        )
+
 def create_goboflow_app():
     """Crea la aplicación GoboFlow completa"""
     if not PYQT_AVAILABLE:
@@ -785,3 +1040,177 @@ def run_gui():
 
 if __name__ == "__main__":
     sys.exit(run_gui())
+
+
+def on_node_selected(self, node):
+    """Maneja selección de nodo"""
+    if node:
+        # Actualizar panel de propiedades si está disponible
+        if PROPERTIES_AVAILABLE and hasattr(self, 'properties_panel'):
+            if hasattr(self.properties_panel, 'set_node'):
+                self.properties_panel.set_node(node)
+        
+        # Actualizar información básica
+        if hasattr(self, 'selected_node_info'):
+            info = f"📋 {node.title}\n"
+            info += f"Tipo: {getattr(node, 'NODE_TYPE', 'unknown')}\n"
+            info += f"Categoría: {getattr(node, 'NODE_CATEGORY', 'N/A')}\n"
+            info += f"ID: {node.id[:8]}..."
+            self.selected_node_info.setText(info)
+    else:
+        # Ningún nodo seleccionado
+        if PROPERTIES_AVAILABLE and hasattr(self, 'properties_panel'):
+            if hasattr(self.properties_panel, 'set_node'):
+                self.properties_panel.set_node(None)
+        
+        if hasattr(self, 'selected_node_info'):
+            self.selected_node_info.setText("Selecciona un nodo para ver sus propiedades")
+
+def on_parameter_changed(self, node, param_name, new_value):
+    """Maneja cambios en parámetros desde el panel de propiedades"""
+    print(f"🎛️ Parámetro cambió: {node.title}.{param_name} = {new_value}")
+    
+    # Ejecutar el grafo automáticamente después de cambio de parámetro
+    QTimer.singleShot(100, self.auto_execute_and_update)
+    
+    # Mostrar en status bar
+    self.statusBar().showMessage(f"Actualizado: {param_name} = {new_value}")
+
+def auto_execute_and_update(self):
+    """Ejecuta el grafo automáticamente y actualiza el viewport"""
+    try:
+        if self.node_editor and hasattr(self.node_editor, 'scene'):
+            # Ejecutar grafo
+            self.node_editor.scene.execute_graph()
+            
+            # Actualizar viewport si está disponible
+            if VIEWPORT_AVAILABLE:
+                self.update_viewport()
+            
+    except Exception as e:
+        print(f"❌ Error en auto-ejecución: {e}")
+
+def update_viewport(self):
+    """Actualiza el viewport con la geometría más reciente"""
+    try:
+        if not VIEWPORT_AVAILABLE or not hasattr(self, 'viewport_widget'):
+            return
+        
+        if not hasattr(self.viewport_widget, 'update_preview'):
+            return
+        
+        # Buscar nodo viewer en el grafo
+        viewer_node = self.find_viewer_node()
+        
+        if viewer_node:
+            # Intentar obtener datos del viewer
+            if hasattr(viewer_node, 'get_last_data'):
+                geometry_data = viewer_node.get_last_data()
+                self.viewport_widget.update_preview(geometry_data)
+                print(f"🔄 Viewport actualizado con datos del viewer")
+            elif hasattr(viewer_node, 'compute'):
+                # Ejecutar el nodo viewer para obtener datos
+                result = viewer_node.compute()
+                geometry_data = result.get('display_geometry')
+                self.viewport_widget.update_preview(geometry_data)
+                print(f"🔄 Viewport actualizado ejecutando viewer")
+        else:
+            # No hay viewer, buscar cualquier geometría en el grafo
+            geometry_data = self.find_any_geometry()
+            if geometry_data:
+                self.viewport_widget.update_preview(geometry_data)
+                print(f"🔄 Viewport actualizado con geometría encontrada")
+            
+    except Exception as e:
+        print(f"❌ Error actualizando viewport: {e}")
+
+def find_viewer_node(self):
+    """Busca el primer nodo viewer en el grafo"""
+    try:
+        if not self.node_editor or not hasattr(self.node_editor, 'scene'):
+            return None
+        
+        for node in self.node_editor.scene.node_graph.nodes.values():
+            if hasattr(node, 'NODE_TYPE') and node.NODE_TYPE == 'viewer':
+                return node
+        
+        return None
+    except:
+        return None
+
+def find_any_geometry(self):
+    """Busca cualquier geometría generada en el grafo"""
+    try:
+        if not self.node_editor or not hasattr(self.node_editor, 'scene'):
+            return None
+        
+        # Buscar nodos que generen geometría
+        for node in self.node_editor.scene.node_graph.nodes.values():
+            if hasattr(node, 'NODE_TYPE'):
+                if node.NODE_TYPE in ['circle', 'rectangle', 'polygon']:
+                    if hasattr(node, 'generate_geometry'):
+                        return node.generate_geometry()
+                    elif hasattr(node, 'compute'):
+                        result = node.compute()
+                        if 'geometry' in result:
+                            return result['geometry']
+        
+        return None
+    except:
+        return None
+
+def on_viewport_export_requested(self, format_type):
+    """Maneja solicitudes de exportación desde el viewport"""
+    print(f"📤 Exportación solicitada: {format_type}")
+    if format_type == "svg":
+        self.export_svg_from_viewport()
+    elif format_type == "png":
+        self.export_png_from_viewport()
+
+def export_svg_from_viewport(self):
+    """Exporta SVG desde el viewport"""
+    try:
+        if not VIEWPORT_AVAILABLE or not hasattr(self, 'viewport_widget'):
+            self.export_svg()  # Fallback al método original
+            return
+        
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "Exportar SVG desde Viewport",
+            str(Path.home() / "gobo_viewport.svg"),
+            "SVG Files (*.svg);;All Files (*.*)"
+        )
+        
+        if file_path:
+            if hasattr(self.viewport_widget, 'get_current_svg'):
+                svg_content = self.viewport_widget.get_current_svg()
+            else:
+                # Fallback básico
+                svg_content = '''<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" style="background: black;">
+  <circle cx="512" cy="512" r="200" fill="white" opacity="0.8"/>
+  <text x="50" y="980" fill="white" font-family="Arial" font-size="24">GoboFlow - Vista Previa</text>
+</svg>'''
+            
+            with open(file_path, 'w', encoding='utf-8') as f:
+                f.write(svg_content)
+            
+            self.statusBar().showMessage(f"SVG exportado: {Path(file_path).name}")
+            
+            QMessageBox.information(
+                self, "Exportación Completada",
+                f"SVG exportado exitosamente a:\n{file_path}"
+            )
+            
+    except Exception as e:
+        QMessageBox.warning(self, "Error", f"Error exportando SVG: {e}")
+
+def export_png_from_viewport(self):
+    """Exporta PNG desde el viewport (futuro)"""
+    QMessageBox.information(
+        self, "Próximamente",
+        "La exportación PNG estará disponible en una próxima versión.\n\n"
+        "Por ahora, puedes:\n"
+        "1. Exportar como SVG\n"
+        "2. Abrir el SVG en un navegador\n"
+        "3. Hacer captura de pantalla"
+    )
